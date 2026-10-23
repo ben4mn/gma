@@ -21,6 +21,16 @@ What was chosen, when, and why. The options and the research behind them are in 
 - Why: simplest to build and run, one language, one database file, no monthly cost. **Ben is fine with the app being down when his home internet is down**, and his connection is good, so there's no need to put media on R2.
 - Accepted risk: Cloudflare's CDN terms restrict serving video from outside Cloudflare on self-serve plans. At family scale this is a grey area with low risk. The code keeps media behind a storage module, so moving renditions to R2 later is contained.
 
+## 2026-10-22: Storage: media on the Seagate drive, the database on the SSD
+
+**Chosen**: photos and videos (originals, renditions and the tus upload scratch, all on one filesystem so finishing an upload is a rename) live on the server's Seagate Portable 1.8 TB USB 3 drive at `/mnt/seagate/gma/media`. The SQLite database stays on the internal SSD (Docker named volume `gma_data`).
+
+- Measured 2026-10-22: sequential write 74.5 MB/s, sequential read 49.7 MB/s, a cold random read of a 300 KB photo 15.7 ms, but an fsync'd small write 164 ms. Media is fine there: one 720p stream is about 0.4 MB/s, and uploads are limited by phones' uplinks. A database is not, because SQLite fsyncs on every commit.
+- Compose mounts the media as a named volume bound to `/mnt/seagate/gma/media` (local driver, `type: none, o: bind`). If the drive isn't mounted, that path doesn't exist and the containers refuse to start, rather than writing photos onto the SSD under an empty mount point. The app also checks for a `.gma-media` sentinel file at start.
+- The drive is shared with Encore and Docket (it already holds about 200 GB of theirs), and it is mounted with `nofail` before Docker starts. gma adds no fstab entries.
+- **Backups (Ben, 2026-10-22): no extra copies on local disks.** The external drive is the single place everything gma needs lives, and Ben will add a daily cloud backup of that drive, assuming it will fail someday. So the worker writes a consistent nightly snapshot of the database onto the drive (`/mnt/seagate/gma/media/backups/gma-YYYY-MM-DD.sqlite`, made with SQLite's backup API, keeping the last 7). A cloud copy of the drive then holds the photos, the videos and a restorable database. A live SQLite file copied mid-write isn't reliably restorable; the snapshot is.
+- Until that cloud backup exists, losing the drive loses the media. This is accepted for the draft, which has no real family data. The drive's SMART health is unknown (`smartctl` isn't installed).
+
 ## 2026-10-22: Family sign-in: invite + email code, then passkeys
 
 **Chosen**: an invite link, then a 6-digit email code typed in the app, then an offer to "Use Face ID next time" (a passkey). Later sign-ins use Face ID / Touch ID / the phone's fingerprint, with the email code as the fallback and the recovery path. No passwords.

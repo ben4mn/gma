@@ -48,7 +48,7 @@ server/
     lib/                  # shared, no routes: ids, tokens, time, email, events, sessions, guards, settings, storage, push, media
     routes/*.js           # each file exports `default async function (app, opts)`; app.js registers every file in this folder
     jobs/                 # queue.js (claim/complete/fail), image.js, video.js, voice.js
-  scripts/                # CLIs: create-admin.js, pair-device.js, gen-vapid.js, seed-demo.js
+  scripts/                # CLIs: create-admin.js, pair-device.js, gen-vapid.js, seed-demo.js; worker-health.js (the worker container's healthcheck); lib/cli.js
   test/                   # *.test.js, helpers/ (makeTestApp, softAuthenticator, fixtures)
 web/
   index.html              # the family PWA shell (every family route serves this)
@@ -72,11 +72,12 @@ docs/                     # ARCHITECTURE.md (this), DECISIONS.md, phase1-options
 | Key | Default | Notes |
 |---|---|---|
 | `NODE_ENV` | `production` | `development` relaxes `Secure` cookies on `http://localhost` |
-| `PUBLIC_URL` | `https://gma.4mn.org` | origin used for links, the Origin check, WebAuthn's expected origin |
+| `PUBLIC_URL` | (required in production) | origin used for links, the Origin check, WebAuthn's expected origin; `http://localhost:<PORT>` in development and test |
 | `HOST` / `PORT` | `0.0.0.0` / `8080` | inside the container |
-| `DATA_DIR` | `/data` | `gma.sqlite` lives here |
-| `MEDIA_DIR` | `/media` | `originals/`, `renditions/`, `uploads/` (tus scratch) |
-| `SECRET_KEY` | (required) | ≥ 32 random bytes, base64; HMAC key for codes and token hashes |
+| `DATA_DIR` | `/data` | `gma.sqlite` lives here (`<repo>/data` in development and test) |
+| `MEDIA_DIR` | `/media` | `originals/`, `renditions/`, `uploads/` (tus scratch); `<repo>/media` in development and test |
+| `WEB_DIR` | `<repo>/web` | optional; where the static web app is served from |
+| `SECRET_KEY` | (required in production) | ≥ 32 random bytes, base64; HMAC key for codes and token hashes; a fixed dev key in development and test |
 | `EMAIL_TRANSPORT` | `console` | `resend` in production |
 | `RESEND_API_KEY` | | |
 | `EMAIL_FROM` | `Grandma's family <hello@auth.4mn.org>` | |
@@ -87,8 +88,10 @@ docs/                     # ARCHITECTURE.md (this), DECISIONS.md, phase1-options
 | `MAX_UPLOAD_BYTES` | `2147483648` | 2 GB per file |
 | `MAX_VIDEO_SECONDS` | `180` | longer videos fail with a kind message |
 | `MAX_VOICE_SECONDS` | `60` | recorder stops itself; server trims at 65 s |
-| `TRUST_PROXY` | `true` | behind nginx + cloudflared |
-| `LOG_LEVEL` | `info` | |
+| `TRUST_PROXY` | `true` in production, else `false` | behind nginx + cloudflared |
+| `LOG_LEVEL` | `info` (`silent` in test) | |
+
+`loadConfig(env)` (`server/src/config.js`) returns a frozen object whose keys are these names in camelCase (`publicUrl`, `secretKey`, `emailTransport`, `resendApiKey`, `emailFrom`, `vapidPublicKey`, `vapidPrivateKey`, `vapidSubject`, `webauthnRpId`, `webauthnRpName`, `maxUploadBytes`, `maxVideoSeconds`, `maxVoiceSeconds`, `trustProxy`, `logLevel`, `dataDir`, `mediaDir`, `webDir`, `host`, `port`, `nodeEnv`), plus `isProduction`, `publicOrigin`, `dbPath` (`<dataDir>/gma.sqlite`) and `cookieSecure` (true unless `PUBLIC_URL` is plain http outside production). It throws a `ConfigError` with a readable message for a missing or malformed value.
 
 ## Data model (SQLite, `server/src/db/migrations/001_init.sql`)
 
@@ -97,8 +100,8 @@ All ids are 26-char ULIDs (`lib/ids.js::newId()`) except passkey credential ids.
 ```sql
 users            (id PK, name, email UNIQUE COLLATE NOCASE, role 'admin'|'member', status 'pending'|'active'|'removed',
                   color, created_at, activated_at, removed_at)
-invites          (id PK, token_hash UNIQUE, created_by → users, name, email, role, expires_at, used_at, used_by → users,
-                  revoked_at, created_at)
+invites          (id PK, token_hash UNIQUE, created_by → users NULL, name, email, role, sent_at /* when the app emailed it; NULL = shared another way */,
+                  expires_at, used_at, used_by → users, revoked_at, created_at)
 login_codes      (id PK, user_id → users, code_hash, link_token_hash UNIQUE, expires_at, attempts, used_at, created_at, ip)
 sessions         (id PK, token_hash UNIQUE, kind 'user'|'device', user_id → users NULL, device_id → devices NULL,
                   created_at, last_seen_at, expires_at, user_agent)
@@ -120,21 +123,23 @@ presets          (id PK, text, sort, active, created_at)
 push_subscriptions (id PK, user_id → users, endpoint UNIQUE, p256dh, auth, user_agent, created_at, last_success_at, failures)
 jobs             (id PK, kind 'image'|'video'|'voice', ref_id, status 'queued'|'running'|'done'|'failed', attempts, max_attempts,
                   run_after, locked_at, locked_by, error, created_at, updated_at)
-events           (id INTEGER PK AUTOINCREMENT, topic, audience 'all'|'user:<id>'|'devices', payload JSON, created_at)  -- SSE outbox
+events           (id INTEGER PK AUTOINCREMENT, topic, audience 'all'|'devices'|'user:<id>'|'device:<id>', payload JSON, created_at)  -- SSE outbox
 settings         (key PK, value JSON)   -- night_start '21:00', night_end '07:00', timezone 'America/Chicago', max_video_seconds …
 admin_log        (id PK, user_id, action, target, detail JSON, created_at)
 ```
 
-Seed rows in the migration: the 8 presets ("Love you", "Call me", "Thank you", "Miss you all", "So beautiful", "Made my day", "Come visit soon", "Proud of you") and the default settings.
+`devices.created_by` is NULL when the CLI paired the device. Media paths (`items.original_path`, `renditions.path`, `voice_notes.original_path`/`audio_path`) are storage *keys*, relative to `MEDIA_DIR` (see Server core). Seed rows in the migration: the 8 presets ("Love you", "Call me", "Thank you", "Miss you all", "So beautiful", "Made my day", "Come visit soon", "Proud of you") and the default settings.
 
 ## Sessions, auth and devices
 
 - **Cookie** `gma_session`: random 32-byte token (base64url), only its SHA-256 is stored. `HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=34560000` (400 days, Chrome's cap). Each request touches `last_seen_at`; past half its life the expiry is pushed out (sliding). `lib/sessions.js` owns `createSession(db, {kind, userId|deviceId, userAgent})`, `setSessionCookie(reply, token)`, `clearSessionCookie(reply)`, `loadSession(db, token)`, `revokeUserSessions(db, userId)`, `revokeDeviceSessions(db, deviceId)`.
 - **Guards** (`lib/guards.js`, Fastify preHandlers): `requireUser`, `requireAdmin`, `requireDevice`, `requireUserOrDevice`. They set `request.user` or `request.device`. Removed users and revoked devices are 401.
 - **CSRF**: every state-changing request (`POST/PUT/PATCH/DELETE`) must carry an `Origin` header equal to `PUBLIC_URL`'s origin (tus requests included). JSON bodies only, no form posts, plus SameSite=Lax.
-- **Invite** (admin-made, single use, 14 days): `/join/<token>`. If the app emailed the invite to that address, opening the link proves the email and signs them in straight away. If Ben shared the link some other way (a text), they type their name and email and confirm with a code. A user is `pending` until that first sign-in.
-- **Email code** (the reliable path on iPhone, where the installed app has its own cookie jar): 6 digits, valid 15 min, 5 attempts, the newest code wins. Stored as an HMAC. The same email carries a link to `/confirm?t=<token>`. That page needs a button tap (a POST) to sign in, so mail scanners that open links can't burn it. Rate limits: 5 code requests per email per hour and 20 per IP per hour. `POST /api/auth/code/request` always answers 200, so it never reveals who has an account.
-- **Passkeys** ("Use Face ID next time"): after the first sign-in (and after any code sign-in on a device without one, at most 3 offers), the app offers to create a passkey (discoverable credential, `residentKey: 'required'`, `userVerification: 'required'`, attestation `none`, RP ID `gma.4mn.org`). Later sign-ins use "Sign in with Face ID" (a usernameless `navigator.credentials.get`). The email code stays as the fallback and the recovery path. Verified rules (`docs/research/passkeys-research.json`): `create()`/`get()` run only from a tap, never on load; no conditional/autofill UI (it is unreliable in the installed iOS app); challenges are server-side, single use, 5 min; `requireUserVerification: true`; synced passkeys keep counter 0 (not a clone signal); one gentle error for every `NotAllowedError` ("That didn't work. Try again or get an email code."). iCloud Keychain must be on for iPhone passkeys; the code path covers everyone else. Grandma's frame never uses passkeys. A user can hold several passkeys and remove them on the You screen. Removing a user deletes their passkeys and sessions.
+- **Invite** (admin-made, single use, 14 days): `/join/<token>`. If the app emailed the invite to that address, opening the link proves the email and signs them in straight away. If Ben shared the link some other way (a text), they type their name and email and confirm with a code. A user is `pending` until that first sign-in. Accepting marks the invite used by that pending person, but it stays usable until they finish signing in, so a mistyped email is fixed by opening the link again (the same pending person gets the new address). Typing the address of someone who already has an account only sends them a code and leaves the invite alone, unless the link proves that address. A removed person's address is refused. An invite never changes an existing person's role.
+- **Email code** (the reliable path on iPhone, where the installed app has its own cookie jar): 6 digits, valid 15 min, 5 attempts, the newest code wins. Stored as an HMAC. The same email carries a link to `/confirm?t=<token>`. That page needs a button tap (a POST) to sign in, so mail scanners that open links can't burn it. Rate limits: 5 code requests per email per hour and 20 per IP per hour. `POST /api/auth/code/request` always answers 200, so it never reveals who has an account (the email is sent without waiting, so the timing doesn't tell either, and the per-email limit silently sends nothing). Other per-IP limits: code verify and link confirm 30 per 15 min, passkey login 30 a minute, invite lookups 60 a minute, invite accepts 20 an hour. The per-IP key is `CF-Connecting-IP` when `TRUST_PROXY` is on, else `request.ip`.
+- **Passkeys** ("Use Face ID next time"): after the first sign-in (and after any code sign-in on a device without one, at most 3 offers), the app offers to create a passkey (discoverable credential, `residentKey: 'required'`, `userVerification: 'required'`, attestation `none`, RP ID `gma.4mn.org`). Later sign-ins use "Sign in with Face ID" (a usernameless `navigator.credentials.get`). The email code stays as the fallback and the recovery path. Verified rules (`docs/research/passkeys-research.json`): `create()`/`get()` run only from a tap, never on load; no conditional/autofill UI (it is unreliable in the installed iOS app); challenges are server-side, single use, 5 min; `requireUserVerification: true`; synced passkeys keep counter 0 (not a clone signal); one gentle error for every `NotAllowedError` ("That didn't work. Try again or get an email code."). The client fetches options before the tap (iOS loses a tap that waits on the network) but never while a ceremony is running: the server keeps one pending challenge per browser, so a second options call would replace the challenge the sheet is signing (`web/app/passkeys.js::prefetchOptions`; refresh only after a failure). iCloud Keychain must be on for iPhone passkeys; the code path covers everyone else. Grandma's frame never uses passkeys. A user can hold several passkeys and remove them on the You screen. Removing a user deletes their passkeys and sessions.
+  - Implementation (`lib/webauthn.js`, `routes/auth.js`): the challenge is tied to the browser by the `gma_webauthn` cookie (HttpOnly, SameSite=Strict, path `/api/auth/passkey`, 5 min) holding the challenge row id plus an HMAC of it; the verify routes read the challenge from that row, never from the client, and delete it on first use. Registration also sets `authenticatorAttachment: 'platform'` (SimpleWebAuthn's `preferredAuthenticatorType: 'localDevice'`), so nobody lands on the security-key sheet; the user handle is an HMAC of the user id (stable, opaque); the label is the provider's name from the AAGUID ("Apple Passwords", "Google Password Manager", …, else "Passkey"). A sign-in's `userHandle`, when sent, must match. An unknown credential, or one whose owner was removed, is 404 `unknown_credential` (the client then calls `signalUnknownCredential` where supported and offers the email code).
+  - The offer (`offer_passkey`, in the sign-in answers and `/api/me`): at most one offer per session and 3 per device, never on a device that signed in with or made a passkey. The count lives in the `gma_passkey_offers` cookie (HttpOnly, 400 days: `<count>.<session id last offered>` or `done`), so it survives a new session on the same phone; a passkey sign-in answers `offer_passkey: false`.
 - **Grandma's frame**: Ben pairs a device in `/admin` (or `npm run device:pair`). That makes a 32-byte token, shown once as `https://gma.4mn.org/grandma?device=<token>`. `GET /grandma?device=` checks the token, creates a `device` session (cookie), and 302s to `/grandma/` with the token stripped from the URL. The kiosk launches with that URL, so a wiped browser profile pairs itself again at the next boot. Request logs redact the `device`, `t` and `token` query parameters.
 
 ## HTTP API
@@ -144,19 +149,19 @@ JSON in and out. Errors are `{error: {code, message}}`, and `message` is a sente
 | Area | Route | Guard | Notes |
 |---|---|---|---|
 | Health | `GET /healthz` | public | `{ok, db, worker_last_seen}` |
-| Invites | `GET /api/invites/:token` | public | `{valid, name, email}` |
-| | `POST /api/invites/:token/accept` `{name, email}` | public | creates/updates the pending user, sends a code |
-| Auth | `POST /api/auth/code/request` `{email}` | public | always 200 |
-| | `POST /api/auth/code/verify` `{email, code}` | public | sets the session; `{user, offer_passkey}` |
-| | `POST /api/auth/link/confirm` `{token}` | public | the `/confirm` page's button |
-| | `POST /api/auth/passkey/register/options` / `…/verify` | user | |
-| | `POST /api/auth/passkey/login/options` / `…/verify` | public | usernameless |
-| | `POST /api/auth/logout` | user | |
-| Me | `GET /api/me` | user | `{user, passkeys: n, push: bool}` |
-| | `GET /api/me/passkeys`, `DELETE /api/me/passkeys/:id` | user | |
-| Items | `GET /api/items?scope=family\|mine&before=` | user | ready items (plus your own processing/failed on `mine`), renditions, Grandma's reactions per item |
-| | `GET /api/items/:id`, `PATCH /api/items/:id` `{caption}`, `DELETE /api/items/:id` | user (owner or admin) | |
-| Uploads | `ALL /api/uploads/*` (tus) | user | metadata `filename, filetype, caption, batch_id`; on finish → item `processing` + job |
+| Invites | `GET /api/invites/:token` | public | `{valid, name, email, emailed, reason}`; `reason` is `unknown`, `expired`, `revoked` or `used` when not valid; `emailed` = the app mailed it to `email` |
+| | `POST /api/invites/:token/accept` `{name, email}` | public | creates/updates the pending user. Emailed to that address → signs in: `{signed_in: true, user, offer_passkey}`; otherwise sends a code: `{signed_in: false, email}`. Errors `invite_unknown` 404, `invite_expired`/`invite_revoked`/`invite_used` 410, `account_removed` 403 |
+| Auth | `POST /api/auth/code/request` `{email}` | public | always 200 `{ok: true}` (a malformed email is 400 `invalid_email`; over 20 per IP per hour is 429) |
+| | `POST /api/auth/code/verify` `{email, code}` | public | sets the session; `{user, offer_passkey}`. Every failure is the same 400 `invalid_code` |
+| | `POST /api/auth/link/confirm` `{token}` | public | the `/confirm` page's button; `{user, offer_passkey}`, or 400 `link_expired` |
+| | `POST /api/auth/passkey/register/options` / `…/verify` | user | options: the creation options JSON itself (for `startRegistration({optionsJSON})`); verify: body is `startRegistration`'s result → `{passkey, passkeys: n}` |
+| | `POST /api/auth/passkey/login/options` / `…/verify` | public | usernameless; options: the request options JSON; verify: body is `startAuthentication`'s result → `{user, offer_passkey: false}`. 400 `passkey_failed`, 404 `unknown_credential` |
+| | `POST /api/auth/logout` | user | `{ok: true}`; ends this session only |
+| Me | `GET /api/me` | user | `{user, passkeys: n, push: bool, offer_passkey}`; `user` is `{id, name, email, role, status, color}` |
+| | `GET /api/me/passkeys`, `DELETE /api/me/passkeys/:id` | user | list: `{passkeys: [{id, label, backed_up, device_type, created_at, last_used_at}], rp_id, user_handle}` (what `signalAllAcceptedCredentials` needs); delete: `{ok, passkeys: n}` |
+| Items | `GET /api/items?scope=family\|mine&before=&limit=` | user | ready items (plus your own processing/failed on `mine`), renditions, Grandma's reactions per item. `{items, next_before}` (limit 30, max 100); each item is `{id, kind, status, caption, batch_id, created_at, ready_at, width, height, duration_ms, user: {id, name, color}, renditions: {<name>: {url, mime, width, height}}, grandma_events: [{id, kind, reaction, preset_text, recipient_user_id, created_at}], can_edit}` plus `error` on your own failed ones |
+| | `GET /api/items/:id`, `PATCH /api/items/:id` `{caption}`, `DELETE /api/items/:id` | user (owner or admin) | `{item}`; `DELETE` → `{ok: true}` and `item.removed`. Captions ≤ 500 characters |
+| Uploads | `ALL /api/uploads/*` (tus) | user | metadata `filename, filetype, caption, batch_id`; on finish → item `processing` + job. Only the uploader can continue an upload. The type is sniffed from the bytes (photo or video, else 415). The finishing response carries `X-Item-Id`; `Location` is relative. Unfinished chunks are swept after 7 days |
 | Media | `GET /media/:itemId/:name` | user or device | Range support, `Cache-Control: private, max-age=31536000, immutable`; URLs carry `?v=<ready_at>` |
 | | `GET /media/voice/:voiceId` | user or device | the m4a |
 | Grandma's Feed | `GET /api/grandma-events?before=` | user | reactions, presets, voice notes; each with the item thumb, the sender and the recipient |
@@ -174,15 +179,26 @@ JSON in and out. Errors are `{error: {code, message}}`, and `message` is a sente
 | | `GET /api/admin/devices`, `POST /api/admin/devices` `{name}` (returns the pairing URL once), `POST /api/admin/devices/:id/revoke`, `POST /api/admin/devices/:id/reload` | admin | `reload` sends an SSE `reload` to the frame |
 | | `GET/PUT /api/admin/presets`, `GET/PUT /api/admin/settings`, `GET /api/admin/health` | admin | health: queue depth, failed jobs, disk free, frame last seen |
 
+Admin details (`server/src/routes/admin.js`; every response `no-store`, every change an `admin_log` row, never a token):
+- Invites: `{invite, url, sent}`, the link shown once. With `send`, the email goes out first; if it fails the answer is a 424 `email_failed` (a 4xx so the sentence reaches the form) and nothing is created. A new invite to an address revokes that address's older open invite. `GET /api/admin/people` → `{people, invites}` (open, unexpired invites only).
+- Remove: also deletes pending login codes and WebAuthn challenges and revokes the person's open invites; an admin can't remove themselves. Restore → `active`, or `pending` if they never signed in.
+- Items: only a `ready` item can be hidden (409 otherwise). Hide publishes `item.removed`, unhide `item.ready`, delete `item.removed`, each with `{item_id}`. Delete removes the original, the renditions, voice notes on the item and its jobs; Grandma's events on it stay (`item_id` → NULL).
+- Devices: `POST` → `{device, url}`; reload publishes `frame.reload` to `device:<id>` (409 if unpaired).
+- Presets: `PUT {presets: [{id?, text, active?}]}` is the whole list in order; 1 to 8 active, ≤ 40 characters each. Presets left out are deleted, or turned off if Grandma ever sent them. Publishes `settings.changed` `{keys: ['presets']}`.
+- Settings: `night_start`, `night_end` (`HH:MM`), `timezone` (IANA), `max_video_seconds` (10–600), `max_voice_seconds` (10–60); anything else is a 400. Publishes `settings.changed` `{keys}`.
+- Health: `{queue_depth, running, queue: {image, video, voice}, failed_jobs, recent_failures, items, disk_free_bytes, disk_total_bytes, frame_last_seen, frames, worker_last_seen}`.
+
 Pages (all serve the family shell `web/index.html` unless noted): `/` Family, `/from-grandma` Grandma's Feed, `/mine`, `/upload`, `/join/:token`, `/signin`, `/confirm`, `/you`, `/admin`, `/admin/*`; `/grandma/` serves `web/grandma/index.html`.
 
 ## Live events (SSE)
 
-The `events` table is an outbox. Anything that changes state (the app or the worker) inserts a row (`lib/events.js::publish(db, topic, payload, audience)`). The app polls it every second and fans new rows out to connected clients that match the audience. Event ids are the row ids, so `Last-Event-ID` resumes after a reconnect. Topics: `item.ready`, `item.removed`, `item.failed` (owner only), `grandma.event`, `settings.changed`, `frame.reload` (devices). Rows older than 7 days are deleted.
+The `events` table is an outbox. Anything that changes state (the app or the worker) inserts a row (`lib/events.js::publish(db, topic, payload, audience = 'all')`, which returns the row id). Audiences: `all` (every user and device), `devices` (frames), `user:<id>`, `device:<id>` (one frame, e.g. `frame.reload` from the admin's Reload button). The app polls it every second and fans new rows out to connected clients that match the audience. Event ids are the row ids, so `Last-Event-ID` resumes after a reconnect. Topics: `item.ready`, `item.removed`, `item.failed` (owner only), `grandma.event`, `settings.changed`, `frame.reload` (devices). Rows older than 7 days are deleted.
+
+On the wire each event is `id: <row id>`, `event: <topic>`, `data: <payload JSON>`, so clients listen with `source.addEventListener('item.ready', …)` (`onmessage` sees nothing). The stream opens with `retry: 3000`. If a reconnecting client missed more than 500 events, or some were already pruned, it gets one `resync` event (`data: {}`) instead and should reload its state.
 
 ## Media pipeline (worker)
 
-`jobs` is claimed with `UPDATE … SET status='running', locked_at=?, locked_by=? WHERE id = (SELECT id FROM jobs WHERE status='queued' AND run_after<=? ORDER BY created_at LIMIT 1) RETURNING *`. Concurrency: video 1, image 2, voice 1. Retries back off exponentially (30 s, 2 min, 10 min), with 3 attempts. At boot, `running` jobs locked more than 30 minutes ago are requeued. Jobs are idempotent: each writes to a temp path and renames into place. The worker writes `worker_last_seen` to settings every 15 s.
+`jobs` is claimed with `UPDATE … SET status='running', locked_at=?, locked_by=? WHERE id = (SELECT id FROM jobs WHERE status='queued' AND run_after<=? ORDER BY created_at LIMIT 1) RETURNING *`. Concurrency: video 1, image 2, voice 1. Retries back off exponentially (30 s, 2 min, 10 min), with 3 attempts. At boot, `running` jobs locked more than 30 minutes ago are requeued. Jobs are idempotent: each writes to a temp path and renames into place. The worker writes `worker_last_seen` to settings every 15 s. A permanent failure (a video over the limit, an unreadable photo) skips the retries. When the last attempt fails, the item becomes `failed` with a kind sentence in `items.error` and `item.failed` `{item_id, error}` goes to `user:<owner>`; `item.ready` is `{item_id, user_id, kind, batch_id}` to `all`; the voice job's `grandma.event` is `{id, kind: 'voice', voice_note_id, item_id}`. The video limit is the lower of `MAX_VIDEO_SECONDS` and the `max_video_seconds` setting. On SIGTERM the runner lets running jobs finish for 20 s, then cancels them and requeues them without spending an attempt.
 
 | Input | Steps | Renditions |
 |---|---|---|
@@ -225,16 +241,32 @@ TTL 2 days, urgency `normal`. A 404/410 deletes the subscription. Other failures
 
 **Service workers**: `web/sw.js` (scope `/`) precaches the family shell and caches renditions for the feed. `web/grandma/sw.js` (scope `/grandma/`) precaches the frame shell, keeps an LRU cache of the newest ~300 `display` and `poster` renditions (plus the newest few videos, capped at 500 MB), serves `/api/frame/state` network-first with the last good copy as fallback, and calls `navigator.storage.persist()`. The frame's **outbox** (IndexedDB) holds reactions, presets and voice notes with their `client_id`, and retries on `online` and every 30 s.
 
+## Server core (the shared pieces feature routes build on)
+
+- **`buildApp(config, { db?, routesDir?, routeOptions?, plugins? })`** opens the database (unless `db` is passed), decorates `app.config`, `app.db`, `app.storage` (`createStorage(config.mediaDir)`), `app.events` (the SSE hub) and `request.user` / `request.device` / `request.session` (null until a guard or `authenticate` runs), then registers every `src/routes/*.js` in name order with opts `{ config, db }` (each file is its own encapsulated plugin) and calls `ready()`.
+- **Errors**: throw `httpError(status, code, message)` (from `lib/guards.js`), or any error with `statusCode` and a snake_case `code`; the handler sends `{error: {code, message}}`. 5xx bodies are always the generic sentence (the real error is logged). Unknown routes are a JSON 404.
+- **Bodies**: JSON only; the `text/plain` parser is removed. A route plugin that needs another body type registers it *inside its own plugin*: the uploads plugin adds `application/offset+octet-stream` for tus, the frame plugin registers `@fastify/multipart` for `POST /api/frame/voice` (it is not registered globally).
+- **Rate limits** are opt-in per route: `{ config: { rateLimit: { max, timeWindow, keyGenerator? } } }`; a 429 is `{error: {code: 'rate_limited', …}}`.
+- **Guards** (`lib/guards.js`): `requireUser`, `requireAdmin` (401 signed out, 403 member), `requireDevice`, `requireUserOrDevice`, plus `authenticate(request, reply)` for routes that want the session without requiring one. A guard re-sets the cookie when the session slid.
+- **Sessions** (`lib/sessions.js`): `createSession(db, {kind, userId|deviceId, userAgent})` → `{token, id, expiresAt}`; `loadSession(db, token)` → `{session, user, device, renewed}` or null (touches `last_seen_at`, and the device's, at most once a minute); `setSessionCookie(reply, token)`, `clearSessionCookie(reply)`, `readSessionToken(request)`, `destroySession(db, token)` (logout), `revokeUserSessions(db, userId)`, `revokeDeviceSessions(db, deviceId)`, `SESSION_COOKIE`.
+- **Tokens** (`lib/tokens.js`): `randomToken(bytes = 32)` (base64url), `randomDigits(6)`, `sha256(value)` (hex, for tokens), `hmac(config.secretKey, value)` (hex, for codes), `safeEqual(a, b)`. **Ids**: `newId()`, `isId()`, `idTime()`. **Time**: `now()`, `setClock()` (tests), `SECOND`…`DAY`, `clockInZone(ms, tz)`, `inWindow(hhmm, start, end)`, `isNight(ms, settings)`, `isValidClockTime()`.
+- **Settings** (`lib/settings.js`): `getSetting(db, key, fallback?)`, `setSetting(db, key, value)`, `getSettings(db, keys?)` (defaults filled in), `setSettings(db, object)`, `DEFAULT_SETTINGS`.
+- **Email** (`lib/email.js`): `sendEmail(config, {to, subject, text, html})`, `signInCodeEmail({name, code, confirmUrl})`, `inviteEmail({name, inviterName, joinUrl})`, `escapeHtml()`; `captureEmails(config)` returns the array that receives that config's mail instead of sending it (the test hook).
+- **Storage** (`lib/storage.js`): `createStorage(mediaDir)` → `{init(), originalKey(id, ext, createdAt), renditionKey(id, name, ext), resolve(key), ensureDirFor(key), tempPathFor(key), remove(key), removeRenditions(id), originalsDir, renditionsDir, uploadsDir}`; `safeJoin(root, …parts)`. Keys look like `originals/2026/10/<id>.heic` and `renditions/<id>/display.jpg`; a voice note's audio is `renditions/<voiceId>/audio.m4a`. `resolve` throws `UnsafePathError` on traversal.
+- **Redaction** (`lib/redact.js`): `redactUrl(url)` (request logs; `device`, `t`, `token`, `code`), `stripSecretParams(url)` (redirect targets).
+- **Pages**: a signed-out visit to a private page 302s to `/signin?next=<path>` (secret parameters stripped); `/admin*` sends members to `/`; `/grandma/` needs a device session or an admin. The shell is identical on every family path, so the family service worker precaches it from the public `/signin`. Caching: `/assets/*` one year immutable (rename a file to change it), `/vendor/*` 30 days, everything else (HTML, JS, CSS, service workers, the manifest) `no-cache` with ETags.
+- **Worker**: `src/worker.js` opens the database, writes `worker_last_seen` every 15 s itself, and calls `startRunner({config, db, storage, log})` exported by `src/jobs/runner.js`, which returns `{stop()}` (awaited on SIGTERM). Without that file it logs and exits 1.
+
 ## Security and privacy
 
 - Nothing public: every page except `/join`, `/signin`, `/confirm`, `/grandma?device=` and `/healthz` needs a session. Every response carries `X-Robots-Tag: noindex, nofollow`; `robots.txt` disallows all.
-- Headers: a strict CSP (`default-src 'self'`; `img-src 'self' blob: data:`; `media-src 'self' blob:`; no inline script), `Referrer-Policy: no-referrer`, `Permissions-Policy: microphone=(self), camera=()`, `X-Content-Type-Options: nosniff`.
+- Headers: a strict CSP (`default-src 'self'`; `img-src 'self' blob: data:`; `media-src 'self' blob:`; no inline script and no inline style either: no `<style>` blocks or `style="…"` attributes in HTML, set `element.style` from JS instead; `frame-ancestors 'none'`), `X-Frame-Options: DENY`, `Cross-Origin-Opener-Policy: same-origin`, HSTS when `PUBLIC_URL` is https, `Referrer-Policy: no-referrer`, `Permissions-Policy: microphone=(self), camera=()`, `X-Content-Type-Options: nosniff`.
 - Secrets only in `.env`. Tokens and codes are stored hashed. Logs never contain tokens, codes or email bodies.
 - Location data is stripped from every rendition. Originals are never served.
 - Removing a person signs them out everywhere and deletes their passkeys and push subscriptions.
 
 ## Testing
 
-- Server: `cd server && npm test` (`node --test`), with every test on a temp `DATA_DIR`/`MEDIA_DIR` and the `console` email transport (codes are captured by a test hook). Passkey tests use a software authenticator (`test/helpers/softAuthenticator.js`, ES256). Media tests skip the ffmpeg/heif cases when the binaries are missing (`npm test` inside the Docker image runs them all).
+- Server: `cd server && npm test` (`node --test "test/**/*.test.js"`; Node 22+ no longer takes a bare directory), with every test on a temp `DATA_DIR`/`MEDIA_DIR` and the `console` email transport (codes are captured by a test hook). `test/helpers/index.js`: `makeTestApp({env, routeOptions, plugins})` → `{app, db, config, mail, tempDir, cleanup}`, `makeUser(db, overrides)`, `makeDevice(db, overrides)` (the row plus its pairing `token`), `loginAs(app, db, user)` / `loginAsDevice(app, db, device)` → a `cookie` header value, `sameOrigin(cookie)` → headers with the app's Origin, `makeWebFixture(dir)`. Injected requests may omit `Origin` in test mode only; a real socket never may. Passkey tests use a software authenticator (`test/helpers/softAuthenticator.js`, ES256). Media tests skip the ffmpeg/heif cases when the binaries are missing (`npm test` inside the Docker image runs them all).
 - Web: `cd web && npm test` for pure modules (time format, grouping, outbox state machine).
-- End to end: `cd web && npm run e2e` starts the server on `127.0.0.1:8787` with temp dirs and drives Playwright 1.58's headless shell through invite → code → passkey (CDP virtual authenticator) → upload → the frame shows it → react → Grandma's Feed shows it.
+- End to end: `cd web && npm run e2e` (`web/e2e/run.sh`, `@playwright/test` 1.58.0 exactly) seeds the demo family into temp dirs under `/tmp/gma-e2e-*`, adds an admin, pairs a frame, starts the app and the worker on `127.0.0.1:8787` (`PUBLIC_URL=http://localhost:8787`: WebAuthn refuses an IP address as the RP ID), runs the specs with Playwright's bundled headless shell (never Google Chrome) and stops both. Sign-in codes are read from the app log (the `console` transport). `flow.spec.js`: invite → join with a code → passkey (CDP virtual authenticator, ctap2/internal/UV) → sign out → passkey sign-in → tus upload → ready → the frame's "New for you" → Love and a preset → Grandma's Feed and Mine → an offline reaction delivered exactly once. `grandma-audit.spec.js`: the `design/tools/shoot.py` checks on the real Grandma screens (targets ≥ 80 px, text ≥ 22 px, contrast ≥ 7:1 or 4.5:1 large, no scroll, a visible `[data-home]`, no autoplay, no request off the origin) and the family tabs (44 px, 13 px, 4.5:1), with screenshots of every state in `web/e2e/shots/`. Night hours are moved through `PUT /api/admin/settings` so the result doesn't depend on the time of day.
