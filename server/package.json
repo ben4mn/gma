@@ -1,0 +1,32 @@
+{
+  "name": "gma-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "gma.4mn.org: the family photo window for Grandma (app + worker).",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "worker": "node src/worker.js",
+    "test": "node --test \"test/**/*.test.js\"",
+    "admin:create": "node scripts/create-admin.js",
+    "device:pair": "node scripts/pair-device.js",
+    "vapid:gen": "node scripts/gen-vapid.js",
+    "seed:demo": "node scripts/seed-demo.js"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.1.3",
+    "@fastify/multipart": "^10.1.6",
+    "@fastify/rate-limit": "^11.2.1",
+    "@fastify/static": "^10.1.7",
+    "@simplewebauthn/server": "^14.0.3",
+    "@tus/file-store": "^2.1.1",
+    "@tus/server": "^2.4.6",
+    "better-sqlite3": "^13.0.3",
+    "fastify": "^5.12.7",
+    "sharp": "^0.35.5",
+    "web-push": "3.6.7"
+  }
+}
