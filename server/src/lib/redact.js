@@ -1,13 +1,19 @@
 // Keeps secrets out of request logs: the frame's pairing token (?device=),
-// confirm-link tokens (?t=) and anything called token or code.
+// confirm-link tokens (?t=), anything called token or code, and invite tokens,
+// which travel in the path (/join/<token>, /api/invites/<token>/accept).
 
 const SECRET_PARAMS = new Set(['device', 't', 'token', 'code']);
+const SECRET_PATHS = /^(\/join\/|\/api\/invites\/)[^/?#]+/;
+
+export function redactPath(pathPart) {
+  return pathPart.replace(SECRET_PATHS, '$1REDACTED');
+}
 
 export function redactUrl(url) {
   if (typeof url !== 'string') return url;
   const q = url.indexOf('?');
-  if (q === -1) return url;
-  const pathPart = url.slice(0, q);
+  if (q === -1) return redactPath(url);
+  const pathPart = redactPath(url.slice(0, q));
   const hashAt = url.indexOf('#', q);
   const query = url.slice(q + 1, hashAt === -1 ? undefined : hashAt);
   const redacted = query

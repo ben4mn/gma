@@ -61,3 +61,22 @@ test('a push with an unreadable payload still shows something', async () => {
   assert.equal(shown[0].title, 'Grandma’s family');
   assert.equal(shown[0].options.body, 'hello');
 });
+
+test('the family worker leaves every /grandma address to the frame’s own worker', () => {
+  const { listeners } = loadWorker();
+  const answered = (path, mode) => {
+    let responded = false;
+    listeners.fetch({
+      request: { method: 'GET', url: `https://gma.4mn.org${path}`, mode, headers: new Headers() },
+      respondWith: (p) => { responded = true; Promise.resolve(p).catch(() => {}); },
+    });
+    return responded;
+  };
+  for (const path of ['/grandma', '/grandma?device=abc', '/grandma/', '/grandma/?fixture=1']) {
+    assert.equal(answered(path, 'navigate'), false, path);
+  }
+  for (const path of ['/grandma/sw.js', '/grandma/grandma.js', '/grandma/grandma.css']) {
+    assert.equal(answered(path, 'no-cors'), false, path);
+  }
+  assert.equal(answered('/mine', 'navigate'), true, 'a family page is still the family worker’s');
+});

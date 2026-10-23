@@ -141,6 +141,7 @@ describe('sign-in', () => {
       assert.deepEqual(res.json().user, {
         id: user.id,
         name: user.name,
+        short_name: user.name.split(' ')[0],
         email: user.email,
         role: 'member',
         status: 'active',
@@ -258,8 +259,15 @@ describe('sign-in', () => {
       const again = await post(cookieJar(), '/api/auth/link/confirm', { token: linkToken });
       assert.equal(again.statusCode, 400);
       assert.equal(again.json().error.code, 'link_expired');
-      const codeAfter = await post(cookieJar(), '/api/auth/code/verify', { email: user.email, code });
-      assert.equal(codeAfter.statusCode, 400, 'the code from the same email is used up too');
+      // The link signed in this browser (Safari); the Home Screen app, with its
+      // own cookie jar, can still take the code from the same email (F4).
+      const ip = freshIp(); // keep these off the shared per-IP verify budget
+      const codeAfter = await post(cookieJar(), '/api/auth/code/verify', { email: user.email, code }, { ip });
+      assert.equal(codeAfter.statusCode, 200, 'the code still works after the link was used');
+      const codeTwice = await post(cookieJar(), '/api/auth/code/verify', { email: user.email, code }, { ip });
+      assert.equal(codeTwice.statusCode, 400, 'and only once');
+      const linkAfterCode = await post(cookieJar(), '/api/auth/link/confirm', { token: linkToken }, { ip });
+      assert.equal(linkAfterCode.statusCode, 400);
     });
 
     test('a link still works after someone burned the code tries', async () => {
@@ -389,6 +397,66 @@ describe('sign-in', () => {
       assert.equal(mailTo(existing.email).length, 1);
       assert.equal(t.db.prepare('SELECT name FROM users WHERE id = ?').get(existing.id).name, existing.name);
       assert.equal(t.db.prepare('SELECT used_at FROM invites WHERE id = ?').get(invite.id).used_at, null);
+    });
+
+    test("one invite can't rename, re-address or take over a relative still pending through another (SEC-1)", async () => {
+      // Sue opened her admin invite (shared by text) and is pending, code not yet typed.
+      const sueInvite = makeInvite(t.db, { name: null, email: null, sent: false, role: 'admin' });
+      const sueJoin = await post(cookieJar(), `/api/invites/${sueInvite.token}/accept`, { name: 'Sue', email: 'sue@example.com' });
+      assert.equal(sueJoin.statusCode, 200, sueJoin.body);
+      const sue = t.db.prepare('SELECT * FROM users WHERE email = ?').get('sue@example.com');
+      assert.equal(sue.status, 'pending');
+      assert.equal(sue.role, 'admin');
+      const sueCodes = mailTo('sue@example.com').length;
+
+      // Mallory has a member invite the app emailed to her. She types Sue's details, then her own.
+      const malloryInvite = makeInvite(t.db, { name: 'Mallory', email: 'mallory@example.com', role: 'member' });
+      const asSue = await post(cookieJar(), `/api/invites/${malloryInvite.token}/accept`, { name: 'Not Sue', email: 'sue@example.com' });
+      assert.equal(asSue.statusCode, 200, asSue.body);
+      assert.deepEqual(asSue.json(), { signed_in: false, email: 'sue@example.com' });
+      const untouched = t.db.prepare('SELECT * FROM users WHERE id = ?').get(sue.id);
+      assert.equal(untouched.name, 'Sue', "Sue's name is left alone");
+      assert.equal(mailTo('sue@example.com').length, sueCodes + 1, 'the code goes to Sue herself');
+      assert.match(mailTo('sue@example.com').at(-1).text, /^Hi Sue,/, 'with her own name, not one Mallory typed');
+      const mid = t.db.prepare('SELECT used_at, used_by, created_user_id FROM invites WHERE id = ?').get(malloryInvite.id);
+      assert.deepEqual(mid, { used_at: null, used_by: null, created_user_id: null }, "Mallory's invite isn't claimed by Sue");
+
+      const jar = cookieJar();
+      const asMallory = await post(jar, `/api/invites/${malloryInvite.token}/accept`, { name: 'Mallory', email: 'mallory@example.com' });
+      assert.equal(asMallory.statusCode, 200, asMallory.body);
+      const body = asMallory.json();
+      assert.equal(body.signed_in, true);
+      assert.notEqual(body.user.id, sue.id, 'Mallory is her own person');
+      assert.equal(body.user.role, 'member');
+      assert.equal(body.user.email, 'mallory@example.com');
+
+      const sueNow = t.db.prepare('SELECT * FROM users WHERE id = ?').get(sue.id);
+      assert.equal(sueNow.email, 'sue@example.com', "Sue's address was never moved");
+      assert.equal(sueNow.status, 'pending');
+      assert.equal(sueNow.role, 'admin');
+      // Sue can still finish with her own code.
+      const { code } = readCodeEmail(mailTo('sue@example.com').at(-1));
+      const sueJar = cookieJar();
+      const done = await post(sueJar, '/api/auth/code/verify', { email: 'sue@example.com', code });
+      assert.equal(done.statusCode, 200);
+      assert.equal(done.json().user.id, sue.id);
+      assert.equal(done.json().user.role, 'admin');
+    });
+
+    test('a shared invite only ever re-addresses the person it made', async () => {
+      const other = makeUser(t.db, { status: 'pending', email: 'pending.other@example.com', name: 'Pat' });
+      const invite = makeInvite(t.db, { name: null, email: null, sent: false });
+      // Typing a pending relative's address leaves them and the invite alone.
+      await post(cookieJar(), `/api/invites/${invite.token}/accept`, { name: 'Eve', email: other.email });
+      // A fresh address makes the invite's own person; a later typo fix moves only them.
+      await post(cookieJar(), `/api/invites/${invite.token}/accept`, { name: 'Eve', email: 'eve@exmaple.com' });
+      const eve = t.db.prepare('SELECT * FROM users WHERE email = ?').get('eve@exmaple.com');
+      assert.equal(t.db.prepare('SELECT created_user_id FROM invites WHERE id = ?').get(invite.id).created_user_id, eve.id);
+      await post(cookieJar(), `/api/invites/${invite.token}/accept`, { name: 'Eve', email: 'eve@example.com' });
+      assert.equal(t.db.prepare('SELECT email FROM users WHERE id = ?').get(eve.id).email, 'eve@example.com');
+      const pat = t.db.prepare('SELECT * FROM users WHERE id = ?').get(other.id);
+      assert.equal(pat.name, 'Pat');
+      assert.equal(pat.email, 'pending.other@example.com');
     });
 
     test('an emailed invite to someone who already has an account signs them in and is used up', async () => {

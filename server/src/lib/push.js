@@ -188,7 +188,9 @@ export function grandmaEventPayload(config, event) {
     return notification(config, event.id, {
       title: 'Grandma sent you a message',
       body: `“${snippet(event.preset_text, 60)}” · about your ${what}`,
-      tag: `grandma-${event.item_id}`,
+      // Its own tag per message: a later reaction (tagged by the photo) or
+      // another message never replaces "Call me" on the lock screen.
+      tag: `grandma-message-${event.id}`,
     });
   }
   if (event.kind === 'voice') {

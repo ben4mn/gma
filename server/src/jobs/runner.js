@@ -6,6 +6,10 @@
 // writes worker_last_seen every 15 s. stop() stops claiming, lets running jobs
 // finish for a grace period, then cancels the rest and puts them back in the
 // queue without spending an attempt.
+//
+// A job whose item or voice note was deleted meanwhile is done (there is nothing
+// left to do), not failed. Once a minute the runner also checks whether the
+// nightly database snapshot is due (snapshot.js).
 
 import os from 'node:os';
 import { randomBytes } from 'node:crypto';
@@ -13,6 +17,7 @@ import { createMediaTools } from '../lib/media.js';
 import { setSetting } from '../lib/settings.js';
 import { claim, complete, fail, release, requeueStale, JOB_KINDS } from './queue.js';
 import * as imageJob from './image.js';
+import { snapshotIfDue } from './snapshot.js';
 import * as videoJob from './video.js';
 import * as voiceJob from './voice.js';
 
@@ -33,6 +38,8 @@ export function startRunner({
   pollMs = 1000,
   heartbeatMs = 15_000,
   graceMs = 20_000,
+  // { firstCheckMs, checkMs } for the nightly snapshot, or false to leave it off.
+  snapshots = { firstCheckMs: 30_000, checkMs: 60_000 },
   workerId = `${os.hostname()}:${process.pid}:${randomBytes(3).toString('hex')}`,
 } = {}) {
   const kinds = JOB_KINDS.filter((kind) => handlers[kind] && (concurrency[kind] ?? 0) > 0);
@@ -51,6 +58,15 @@ export function startRunner({
     }
   }
 
+  // True when the row the job is for (an item, a voice note) no longer exists.
+  function refGone(handler, ctx, job) {
+    try {
+      return handler.isGone?.(ctx, job) === true;
+    } catch {
+      return false;
+    }
+  }
+
   async function runJob(job, controller) {
     const handler = handlers[job.kind];
     const ctx = { config, db, storage, log, media, push, signal: controller.signal };
@@ -61,6 +77,12 @@ export function startRunner({
       if (stopping && controller.signal.aborted) {
         release(db, job.id);
         log.info(`Put ${job.kind} job ${job.id} back in the queue for the next start`);
+        return;
+      }
+      if (refGone(handler, ctx, job)) {
+        // Deleted while we worked on it (its files went with it): nothing left to do.
+        complete(db, job.id);
+        log.info(`${job.kind} job ${job.id}: ${job.ref_id} was deleted, so there is nothing to do`);
         return;
       }
       const outcome = fail(db, job, err);
@@ -107,6 +129,27 @@ export function startRunner({
     return started;
   }
 
+  // The nightly snapshot: one at a time, never while stopping.
+  let snapshotRun = null;
+  function checkSnapshot() {
+    if (stopping || snapshotRun) return snapshotRun;
+    snapshotRun = snapshotIfDue({ db, config, log })
+      .catch((err) => {
+        log.error(`The database snapshot failed: ${err.message}`);
+        return null;
+      })
+      .finally(() => {
+        snapshotRun = null;
+      });
+    return snapshotRun;
+  }
+  const snapshotTimers = [];
+  if (snapshots) {
+    snapshotTimers.push(setTimeout(checkSnapshot, snapshots.firstCheckMs ?? 30_000));
+    snapshotTimers.push(setInterval(checkSnapshot, snapshots.checkMs ?? 60_000));
+    for (const timer of snapshotTimers) timer.unref?.();
+  }
+
   beat();
   const heartbeat = setInterval(beat, heartbeatMs);
   const poller = setInterval(tick, pollMs);
@@ -116,6 +159,7 @@ export function startRunner({
   return {
     workerId,
     tick,
+    checkSnapshot,
     // Resolves when nothing is running (tests use it after tick()).
     async drain() {
       while (inflight.size) await Promise.allSettled([...inflight.values()].map((j) => j.promise));
@@ -128,6 +172,7 @@ export function startRunner({
       stopping = true;
       clearInterval(poller);
       clearInterval(heartbeat);
+      for (const timer of snapshotTimers) clearTimeout(timer);
       const all = () => Promise.allSettled([...inflight.values()].map((j) => j.promise));
       let timer;
       const grace = new Promise((resolve) => {
@@ -137,6 +182,7 @@ export function startRunner({
       clearTimeout(timer);
       for (const { controller } of inflight.values()) controller.abort();
       await all();
+      await snapshotRun; // a snapshot is quick; let it finish so no temp file is left
     },
   };
 }

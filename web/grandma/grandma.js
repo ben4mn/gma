@@ -7,7 +7,7 @@ import { connectLive } from './lib/live.js';
 import { createOutbox, idbStore, memoryStore } from './lib/outbox.js';
 import { slideshowItems, groupIntoCards, familyPhotoUrl, normalizeList } from './lib/cards.js';
 import { formatTime, formatDate, isNightAt, whenLabel, zonedParts, parseHm } from './lib/time.js';
-import { shouldGoHome, shouldRest, canReload } from './lib/idle.js';
+import { shouldGoHome, shouldRest, canReload, canRedrawHome } from './lib/idle.js';
 import { icon } from './lib/dom.js';
 import { renderHome } from './screens/home.js';
 import { renderItem } from './screens/item.js';
@@ -121,7 +121,7 @@ function go(name, screenParams = {}) {
   busy = false;
   screenName = name;
   screen = SCREENS[name](ctx, screenParams);
-  if (name === 'home') homeSignature = signature();
+  if (name === 'home') { homeSignature = signature(); homeStale = false; }
   els.screen.replaceChildren(screen.el);
   els.root.dataset.screen = name;
   updateChrome();
@@ -132,8 +132,13 @@ function signature() {
   return JSON.stringify([v.slideshow.map((i) => i.id + i.display), v.cards.map((c) => c.items.map((i) => i.id)), v.familyPhoto]);
 }
 
+// New cards wait until Home has been left alone for a while (the one-second
+// tick tries again), so nothing jumps under Grandma's finger.
+let homeStale = false; // new cards are waiting for Home to be left alone
 function renderHomeIfChanged() {
-  if (signature() !== homeSignature) go('home');
+  if (signature() === homeSignature) { homeStale = false; return; }
+  if (!FIXTURE && !canRedrawHome({ screen: screenName, lastTouch, now: Date.now(), busy })) { homeStale = true; return; }
+  go('home');
 }
 
 // ---------- the header, night and the resting screen ----------
@@ -206,6 +211,7 @@ function tick() {
   setNight(isNightAt(clockNow(), settings()));
   const s = { screen: screenName, lastTouch, now, busy };
   if (shouldGoHome(s)) go('home');
+  else if (homeStale && screenName === 'home') renderHomeIfChanged();
   if (shouldRest({ ...s, night, resting, screen: screenName })) setResting(true);
   if (reloadPending && (resting || canReload(s))) location.reload();
 }
@@ -280,17 +286,26 @@ async function heartbeat() {
   else if (res.status < 500) setOffline(false);
 }
 
+// The worker's scope is /grandma (no slash), so it also answers the pairing
+// link /grandma?device=… the kiosk opens at boot: after a power cut with no
+// internet that link still opens the saved frame. The server allows the wider
+// scope with a Service-Worker-Allowed header on the script.
+const SW_URL = new URL('./sw.js', import.meta.url);
+const SW_SCOPE = new URL('./', import.meta.url).pathname.replace(/\/$/, '');
+
 async function startServiceWorker() {
   if (!('serviceWorker' in navigator)) return;
   try {
-    const hadController = Boolean(navigator.serviceWorker.controller);
-    const reg = await navigator.serviceWorker.register(new URL('./sw.js', import.meta.url), {
-      scope: new URL('./', import.meta.url).pathname,
-      type: 'module',
-    });
+    const hadController = navigator.serviceWorker.controller?.scriptURL === SW_URL.href;
+    const reg = await navigator.serviceWorker.register(SW_URL, { scope: SW_SCOPE, type: 'module' });
     // a new version took over: reload when Grandma is on Home and not touching it
     navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) reloadPending = true; });
     setInterval(() => reg.update().catch(() => {}), 60 * 60_000);
+    // frames set up before the wider scope still hold a /grandma/ registration,
+    // which would keep winning for /grandma/ pages: retire it
+    for (const old of await navigator.serviceWorker.getRegistrations()) {
+      if (new URL(old.scope).pathname === `${SW_SCOPE}/`) old.unregister().catch(() => {});
+    }
   } catch { /* the frame still works without offline support */ }
   navigator.storage?.persist?.().catch(() => {});
 }

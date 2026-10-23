@@ -12,6 +12,37 @@ export function passkeysSupported() {
 }
 
 /**
+ * Can this phone make a Face ID / fingerprint passkey at all? False on a phone
+ * with no screen lock (and anywhere the check fails), so the offer isn't shown
+ * to someone it can't work for.
+ */
+export async function platformPasskeysAvailable(PKC = globalThis.PublicKeyCredential) {
+  try {
+    if (typeof PKC?.isUserVerifyingPlatformAuthenticatorAvailable !== 'function') return false;
+    return Boolean(await PKC.isUserVerifyingPlatformAuthenticatorAvailable());
+  } catch {
+    return false;
+  }
+}
+
+/** The phone already holds this person's passkey (it was excluded): that's success. */
+export function isAlreadyRegistered(err) {
+  return err?.name === 'InvalidStateError' || err?.code === 'ERROR_AUTHENTICATOR_PREVIOUSLY_REGISTERED'
+    || err?.cause?.name === 'InvalidStateError';
+}
+
+export const PASSKEY_RETRY = 'That didn’t work. You can try again, or keep using email codes.';
+export const PASSKEY_IOS_HELP = 'Face ID sign-in needs a passcode on your phone and iCloud Keychain turned on (Settings, then your name, then iCloud, then Passwords). It’s fine to skip it: email codes always work.';
+
+/** What to say after a failed set-up: why, on an iPhone, and nothing more to try after two. */
+export function registrationFailure({ os = 'other', failures = 1 } = {}) {
+  return {
+    message: os === 'ios' ? PASSKEY_IOS_HELP : PASSKEY_RETRY,
+    canRetry: failures < 2,
+  };
+}
+
+/**
  * Keeps one set of options ready. take() hands them out once (a challenge is
  * single use). It does not fetch the next set: the server keeps one pending
  * challenge per browser (the gma_webauthn cookie), so fetching during the
@@ -91,10 +122,17 @@ export async function signInWithPasskey(optionsJSON) {
 /** Call from a tap. */
 export async function registerPasskey(optionsJSON) {
   if (!optionsJSON) throw new Error(PASSKEY_ERROR);
+  let credential;
   try {
-    const credential = await startRegistration({ optionsJSON });
+    credential = await startRegistration({ optionsJSON });
+  } catch (err) {
+    // The phone refused because it already has this person's (synced) passkey.
+    if (isAlreadyRegistered(err)) return { alreadySetUp: true };
+    throw new Error(PASSKEY_RETRY);
+  }
+  try {
     return await api.post('/api/auth/passkey/register/verify', credential);
   } catch {
-    throw new Error('That didn’t work. You can try again, or keep using email codes.');
+    throw new Error(PASSKEY_RETRY);
   }
 }

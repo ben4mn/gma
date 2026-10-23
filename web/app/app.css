@@ -345,6 +345,12 @@ button.photo { cursor: zoom-in; }
 .card { margin: 0 0 14px; padding: 16px; background: var(--card); border-radius: var(--radius-card); box-shadow: var(--shadow-card); }
 .card-row { display: flex; align-items: center; gap: 12px; min-height: 48px; }
 .card-row + .card-row { border-top: 1px solid var(--paper-deep); padding-top: 10px; margin-top: 10px; }
+.person + .person { border-top: 1px solid var(--paper-deep); padding-top: 10px; margin-top: 10px; }
+.grandma-name { display: flex; flex-wrap: wrap; align-items: center; gap: 0 4px; }
+.grandma-name .card-meta { margin: 0; }
+.grandma-name .card-meta b { color: var(--ink); }
+.grandma-name-form { flex: 1; margin-top: 8px; }
+.grandma-name-form .field { margin-bottom: 10px; }
 .card-main { flex: 1; min-width: 0; }
 .card-main p { margin: 0; }
 .card-name { font-size: 17px; font-weight: 700; overflow-wrap: anywhere; }

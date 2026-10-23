@@ -31,6 +31,13 @@ What was chosen, when, and why. The options and the research behind them are in 
 - **Backups (Ben, 2026-10-22): no extra copies on local disks.** The external drive is the single place everything gma needs lives, and Ben will add a daily cloud backup of that drive, assuming it will fail someday. So the worker writes a consistent nightly snapshot of the database onto the drive (`/mnt/seagate/gma/media/backups/gma-YYYY-MM-DD.sqlite`, made with SQLite's backup API, keeping the last 7). A cloud copy of the drive then holds the photos, the videos and a restorable database. A live SQLite file copied mid-write isn't reliably restorable; the snapshot is.
 - Until that cloud backup exists, losing the drive loses the media. This is accepted for the draft, which has no real family data. The drive's SMART health is unknown (`smartctl` isn't installed).
 
+## 2026-10-22: Deployment: gma's own tunnel container, no nginx
+
+**Chosen**: on Ben's Debian box gma runs like his other apps there: `/home/ben/gma` with `docker-compose.yml` at the repo root and `.env` beside it, and three containers on a fixed subnet (`10.35.0.0/24`): `gma-app`, `gma-worker` and `gma-tunnel`, gma's own named Cloudflare tunnel (`c0773eb4-…`, config in `deploy/cloudflared.yml`) going straight to `http://app:8080`. This replaces the "nginx → Cloudflare Tunnel" line of the architecture decision above.
+
+- Why: nothing is published on the LAN (only `127.0.0.1:3064`, for checks from the box), nginx-proxy-manager and the host's `/etc/cloudflared` stay untouched, and one less hop means one less thing to break. The nginx site stays in `deploy/nginx/` as an optional note.
+- The app believes `CF-Connecting-IP` only from the tunnel's address (`TRUST_PROXY=10.35.0.3`, pinned in compose with `MEDIA_SENTINEL`, `DATA_DIR` and `MEDIA_DIR`, so a typo in `.env` can't move the data or widen the trust). The containers run as uid 1000 with a read-only root, no capabilities and a tmpfs `/tmp`; the worker is capped at 3 CPUs and ffmpeg at two threads.
+
 ## 2026-10-22: Family sign-in: invite + email code, then passkeys
 
 **Chosen**: an invite link, then a 6-digit email code typed in the app, then an offer to "Use Face ID next time" (a passkey). Later sign-ins use Face ID / Touch ID / the phone's fingerprint, with the email code as the fallback and the recovery path. No passwords.
@@ -51,6 +58,12 @@ These were the recommended defaults in Phase 1; each is a setting or a small cha
 - **Night**: 21:00 to 07:00 by default, set in `/admin`; the frame dims, the slideshow rests behind a big clock, and the first tap only wakes it.
 - **Grandma's frame**: the same PWA at `/grandma`, a Chromium kiosk under cage on Raspberry Pi OS Lite (trixie), paired once with a device token; live updates over SSE, not web push.
 - **Updates and offline**: the web app updates itself; the frame caches the newest ~300 photos and queues anything Grandma sends while offline.
+
+## 2026-10-22: Review fixes: what was changed, and what waits
+
+- **Family voice notes on an upload are deferred.** VISION → Sending lists "an optional caption or voice note"; the draft ships captions only. The schema already allows it (`voice_notes.item_id`, deleted with the item), so it can come later without a migration: a record button under the caption (at most 60 s) and a big "Hear Sarah" button on Grandma's item screen that plays only on a tap. Until then, a caption is the way to say what a photo is.
+- **`EMAIL_TRANSPORT=console` stays allowed in production** for the first days of a deploy, before Resend is set up for `auth.4mn.org` (the README's bootstrap). It prints messages to the app log, so an invite it "sent" never counts as emailed: opening it still asks for a code. Switch to `resend` before inviting the family.
+- **Limits on a shared box**: per person, 200 files and 10 GB of uploads a day and 120 new uploads an hour; a new upload must leave 50 GB free on the Seagate drive; images over 120 MP are refused; compose caps the app at 1 GB, the worker at 3 GB and the tunnel at 256 MB. After 15 wrong sign-in codes in a day, that email gets no codes until the next day.
 
 ## Still open
 

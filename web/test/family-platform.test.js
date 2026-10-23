@@ -38,6 +38,10 @@ test('install steps per platform', () => {
   assert.equal(ios26.kind, 'ios26');
   assert.match(ios26.steps.join(' '), /•••.*Share.*Open as Web App/s);
   assert.equal(installGuide(detectPlatform(UA.safari17)).kind, 'ios');
+  // A mail app's built-in Safari view sends Safari's user agent: every Safari guide ends with the way out (F10).
+  for (const ua of [UA.safari26, UA.safari17]) {
+    assert.match(installGuide(detectPlatform(ua)).steps.at(-1), /inside another app.*Safari compass/);
+  }
   assert.equal(installGuide(detectPlatform(UA.android)).kind, 'android');
   assert.equal(installGuide(detectPlatform(UA.android), { canPrompt: true }).kind, 'android-prompt');
   assert.equal(installGuide(detectPlatform(UA.safari17, { standalone: true })).kind, 'installed');

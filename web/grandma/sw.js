@@ -1,8 +1,14 @@
-// The frame's service worker (scope /grandma/, registered as a module).
+// The frame's service worker (scope /grandma, registered as a module; the
+// server sends Service-Worker-Allowed: /grandma with this script).
+// - The scope covers the pairing link /grandma?device=… that the kiosk opens at
+//   every boot. Online it goes to the server (which sets the cookie and sends
+//   the frame on to /grandma/); with no internet, or the server down, it is sent
+//   straight to the saved frame, so a power cut never leaves a blank screen.
 // - The shell is precached and served network-first, so a new version shows up
 //   at the next load and the frame still boots with no internet.
 // - /api/frame/state is network-first; the last good copy answers when the
-//   server can't, marked X-Gma-Cached: 1 so the page shows the offline line.
+//   server can't (no network, or a 5xx from the tunnel), marked X-Gma-Cached: 1
+//   so the page shows the offline line.
 // - display/poster renditions: cache-first, the ~300 most recently shown kept.
 // - videos: saved whole in the background after the first play (≤ 500 MB in
 //   all) and then answered from the cache, Range requests included.
@@ -14,6 +20,8 @@ const STATE_CACHE = 'gma-frame-state';
 const MEDIA_CACHE = 'gma-frame-media';
 const NETWORK_TIMEOUT_MS = 4000;
 const here = (path) => new URL(path, self.location).href;
+const FRAME_PAGE = here('./'); // /grandma/
+const PAIRING_PATH = new URL(FRAME_PAGE).pathname.replace(/\/$/, ''); // /grandma
 const INDEX_KEY = here('./__media-index.json');
 const STATE_KEY = new URL('/api/frame/state', self.location).href;
 
@@ -55,28 +63,60 @@ self.addEventListener('fetch', (event) => {
   const kind = mediaKind(url.pathname);
   if (kind === 'image') return event.respondWith(cachedImage(request));
   if (kind === 'video') return event.respondWith(cachedVideo(event, request));
-  if (request.mode === 'navigate' || SHELL.includes(url.href) || url.pathname.startsWith('/assets/')) {
-    return event.respondWith(shell(request));
-  }
+  if (request.mode === 'navigate') return event.respondWith(page(request, url));
+  if (SHELL.includes(url.href) || url.pathname.startsWith('/assets/')) return event.respondWith(shell(request));
   // everything else (SSE, other API calls) goes straight to the network
 });
 
 // ---------- the shell ----------
 
 function withTimeout(promise, ms) {
-  return Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))]);
+  let timer;
+  const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('timeout')), ms); });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 async function shell(request) {
   const cache = await caches.open(SHELL_CACHE);
   try {
     const res = await withTimeout(fetch(request), NETWORK_TIMEOUT_MS);
-    if (res.ok && res.type === 'basic') cache.put(request.mode === 'navigate' ? here('./') : request, res.clone());
+    if (res.ok && res.type === 'basic') cache.put(request, res.clone());
     return res;
   } catch {
-    const cached = await cache.match(request.mode === 'navigate' ? here('./') : request, { ignoreSearch: request.mode === 'navigate' });
-    return cached ?? new Response('', { status: 504 });
+    return (await cache.match(request)) ?? new Response('', { status: 504 });
   }
+}
+
+/**
+ * A page load: /grandma/ (the frame) or /grandma?device=… (the pairing link).
+ * Network first; when the network fails or the server behind the tunnel is down
+ * (a 5xx), the saved frame. The pairing link is answered with a redirect to it:
+ * the frame's relative links only resolve from /grandma/, and the token stays
+ * out of the address bar, as the server does it.
+ */
+async function page(request, url) {
+  const cache = await caches.open(SHELL_CACHE);
+  const pairing = url.pathname === PAIRING_PATH;
+  try {
+    const res = await withTimeout(fetch(request), NETWORK_TIMEOUT_MS);
+    if (res.status >= 500) throw new Error(`HTTP ${res.status}`);
+    // only the frame itself is saved (never a redirect, a "not set up" page or a sign-in)
+    if (!pairing && res.status === 200 && res.type === 'basic' && !res.redirected) cache.put(FRAME_PAGE, res.clone());
+    return res;
+  } catch {
+    const saved = await cache.match(FRAME_PAGE);
+    if (saved) return pairing ? Response.redirect(FRAME_PAGE, 302) : saved;
+    return offlinePage();
+  }
+}
+
+/** Only before the frame was ever saved: a calm line that tries again by itself. */
+function offlinePage() {
+  return new Response(
+    '<!doctype html><html lang="en"><meta charset="utf-8"><meta http-equiv="refresh" content="30">'
+    + '<title>Grandma’s photos</title><p>No internet right now. The photos will be back soon.</p></html>',
+    { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8' } },
+  );
 }
 
 // ---------- the frame's state ----------
@@ -85,6 +125,7 @@ async function frameState(request) {
   const cache = await caches.open(STATE_CACHE);
   try {
     const res = await withTimeout(fetch(request), NETWORK_TIMEOUT_MS * 2);
+    if (res.status >= 500) throw new Error(`HTTP ${res.status}`); // the tunnel answers, the server doesn't
     if (res.ok) await cache.put(STATE_KEY, res.clone());
     return res;
   } catch {

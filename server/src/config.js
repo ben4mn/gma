@@ -3,6 +3,7 @@
 // (PUBLIC_URL → publicUrl, MAX_UPLOAD_BYTES → maxUploadBytes, …), plus a few
 // derived values (publicOrigin, dbPath, cookieSecure, isProduction).
 
+import { isIP } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -33,12 +34,42 @@ function int(env, key, fallback) {
   return value;
 }
 
-function bool(env, key, fallback) {
-  const raw = str(env, key, undefined);
-  if (raw === undefined) return fallback;
-  if (/^(1|true|yes|on)$/i.test(raw)) return true;
-  if (/^(0|false|no|off)$/i.test(raw)) return false;
-  throw new ConfigError(`${key} must be true or false, got "${raw}".`);
+// TRUST_PROXY: true (trust whoever connects; only safe when nothing but the
+// proxy can reach the app), false, or a comma-separated list of the proxies'
+// addresses and CIDR ranges ("10.35.0.3", "10.35.0.0/24, fd00::/8"). A list
+// is passed to Fastify as an array, so `request.ip` only follows
+// X-Forwarded-For from those peers, and lib/client-ip.js only believes their
+// CF-Connecting-IP.
+export function parseTrustProxy(raw, fallback) {
+  if (raw === undefined || raw === null || String(raw).trim() === '') return fallback;
+  const value = String(raw).trim();
+  if (/^(1|true|yes|on)$/i.test(value)) return true;
+  if (/^(0|false|no|off)$/i.test(value)) return false;
+  const entries = value.split(',').map((entry) => entry.trim()).filter(Boolean);
+  for (const entry of entries) {
+    const [address, prefix, extra] = entry.split('/');
+    const family = isIP(address);
+    const maxPrefix = family === 6 ? 128 : 32;
+    const prefixOk = prefix === undefined || (/^\d{1,3}$/.test(prefix) && Number(prefix) <= maxPrefix);
+    if (family === 0 || !prefixOk || extra !== undefined) {
+      throw new ConfigError(
+        `TRUST_PROXY must be true, false or a comma-separated list of IP addresses or ranges (like 10.35.0.3 or 10.35.0.0/24), got "${value}".`,
+      );
+    }
+  }
+  return Object.freeze(entries);
+}
+
+// MEDIA_SENTINEL: a file that must exist in MEDIA_DIR before the app or the
+// worker starts, so an unmounted drive never means photos written to the
+// wrong disk. On by default in production; "off" turns it off.
+function mediaSentinel(env, isProduction) {
+  const raw = str(env, 'MEDIA_SENTINEL', isProduction ? '.gma-media' : '');
+  if (raw === '' || /^(off|none|false|0)$/i.test(raw)) return '';
+  if (!/^[A-Za-z0-9._-]+$/.test(raw) || raw === '.' || raw === '..') {
+    throw new ConfigError(`MEDIA_SENTINEL must be a plain file name like .gma-media, got "${raw}".`);
+  }
+  return raw;
 }
 
 function parseUrl(key, raw) {
@@ -92,6 +123,7 @@ export function loadConfig(env = process.env) {
     port,
     dataDir,
     mediaDir,
+    mediaSentinel: mediaSentinel(env, isProduction),
     dbPath: path.join(dataDir, 'gma.sqlite'),
     webDir: path.resolve(str(env, 'WEB_DIR', path.join(REPO_ROOT, 'web'))),
     secretKey,
@@ -106,7 +138,7 @@ export function loadConfig(env = process.env) {
     maxUploadBytes: int(env, 'MAX_UPLOAD_BYTES', 2 * 1024 * 1024 * 1024),
     maxVideoSeconds: int(env, 'MAX_VIDEO_SECONDS', 180),
     maxVoiceSeconds: int(env, 'MAX_VOICE_SECONDS', 60),
-    trustProxy: bool(env, 'TRUST_PROXY', isProduction),
+    trustProxy: parseTrustProxy(env.TRUST_PROXY, isProduction),
     logLevel: str(env, 'LOG_LEVEL', nodeEnv === 'test' ? 'silent' : 'info'),
     // Secure cookies everywhere except plain-http development (http://localhost).
     cookieSecure: isProduction || publicUrlObj.protocol === 'https:',

@@ -61,7 +61,8 @@
       "kind": "photo",
       "sender": {
         "id": "u_mike",
-        "name": "Mike"
+        "name": "Mike Lee",
+        "short_name": "Mike"
       },
       "caption": "Sarah picked chamomile for your tea.",
       "created_at": 1792533600000,
@@ -84,7 +85,8 @@
       "kind": "photo",
       "sender": {
         "id": "u_carol",
-        "name": "Aunt Carol"
+        "name": "Carol Bennett",
+        "short_name": "Aunt Carol"
       },
       "caption": "A little visitor in the woods behind my house.",
       "created_at": 1792357200000,
@@ -107,7 +109,8 @@
       "kind": "photo",
       "sender": {
         "id": "u_sarah",
-        "name": "Sarah"
+        "name": "Sarah Lee",
+        "short_name": "Sarah"
       },
       "caption": "Lily baked your cookies!",
       "created_at": 1792339200000,
@@ -130,7 +133,8 @@
       "kind": "photo",
       "sender": {
         "id": "u_mike",
-        "name": "Mike"
+        "name": "Mike Lee",
+        "short_name": "Mike"
       },
       "caption": "Our old bench by the water.",
       "created_at": 1792267200000,
@@ -153,7 +157,8 @@
       "kind": "photo",
       "sender": {
         "id": "u_jake",
-        "name": "Jake"
+        "name": "Jake Alvarez",
+        "short_name": "Jake"
       },
       "caption": "Sparklers on the porch. We missed you!",
       "created_at": 1792287000000,
@@ -177,7 +182,8 @@
       "batch_id": "b_sarah",
       "sender": {
         "id": "u_sarah",
-        "name": "Sarah"
+        "name": "Sarah Lee",
+        "short_name": "Sarah"
       },
       "items": [
         {
@@ -209,7 +215,8 @@
       "batch_id": "b_mike",
       "sender": {
         "id": "u_mike",
-        "name": "Mike"
+        "name": "Mike Lee",
+        "short_name": "Mike"
       },
       "items": [
         {
@@ -217,7 +224,8 @@
           "kind": "photo",
           "sender": {
             "id": "u_mike",
-            "name": "Mike"
+            "name": "Mike Lee",
+            "short_name": "Mike"
           },
           "caption": "Our old bench by the water.",
           "created_at": 1792537800000,
@@ -241,7 +249,8 @@
           "kind": "photo",
           "sender": {
             "id": "u_mike",
-            "name": "Mike"
+            "name": "Mike Lee",
+            "short_name": "Mike"
           },
           "caption": "The fjord from the ferry.",
           "created_at": 1792537860000,
@@ -265,7 +274,8 @@
           "kind": "photo",
           "sender": {
             "id": "u_mike",
-            "name": "Mike"
+            "name": "Mike Lee",
+            "short_name": "Mike"
           },
           "caption": "",
           "created_at": 1792537920000,
@@ -290,7 +300,8 @@
       "batch_id": "b_lily",
       "sender": {
         "id": "u_lily",
-        "name": "Lily"
+        "name": "Lily Lee",
+        "short_name": "Lily"
       },
       "items": [
         {
@@ -298,7 +309,8 @@
           "kind": "photo",
           "sender": {
             "id": "u_lily",
-            "name": "Lily"
+            "name": "Lily Lee",
+            "short_name": "Lily"
           },
           "caption": "Meet Biscuit! He snores.",
           "created_at": 1792440000000,

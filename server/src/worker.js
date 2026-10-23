@@ -2,14 +2,15 @@
 //
 // The job loop lives in ./jobs/runner.js (the media pipeline), which exports
 //   startRunner({ config, db, storage, log }) → { stop(): Promise<void> | void }
-// This file opens the database, starts the runner, writes worker_last_seen to
-// settings every 15 s (GET /healthz reports it) and stops cleanly on SIGTERM.
+// This file checks the photo drive is mounted (MEDIA_SENTINEL), opens the
+// database, starts the runner, writes worker_last_seen to settings every 15 s
+// (GET /healthz reports it) and stops cleanly on SIGTERM.
 
 import fs from 'node:fs';
 import { loadConfig } from './config.js';
 import { openDb } from './db/index.js';
 import { setSetting } from './lib/settings.js';
-import { createStorage } from './lib/storage.js';
+import { assertMediaMounted, createStorage } from './lib/storage.js';
 
 const HEARTBEAT_MS = 15_000;
 
@@ -22,6 +23,8 @@ const log = {
 let config;
 try {
   config = loadConfig(process.env);
+  // Refuse to start on an unmounted photo drive rather than write to the SSD.
+  assertMediaMounted(config.mediaDir, config.mediaSentinel);
 } catch (err) {
   console.error(`gma worker: ${err.message}`);
   process.exit(78); // EX_CONFIG
@@ -46,9 +49,14 @@ if (typeof startRunner !== 'function') {
   process.exit(1);
 }
 
+const storage = createStorage(config.mediaDir, { sentinel: config.mediaSentinel });
+try {
+  await storage.init();
+} catch (err) {
+  log.error(err.message);
+  process.exit(err.code === 'media_not_mounted' ? 78 : 1);
+}
 const db = openDb(config.dbPath);
-const storage = createStorage(config.mediaDir);
-await storage.init();
 
 const beat = () => {
   try {

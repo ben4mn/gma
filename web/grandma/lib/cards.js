@@ -1,6 +1,8 @@
 // What the frame shows, built from GET /api/frame/state. Pure: no DOM, no fetch.
 // normalizeItem() accepts the few shapes the server may send (a rendition map of
 // URLs or {url} objects, or bare names), so the screens only see one shape.
+// People are named by their short name everywhere on the frame ("3 photos from
+// Mike", "Sent to Mike"); Ben sets it in /admin, and it defaults to the first word.
 
 const RENDITIONS = ['thumb', 'display', 'large', 'poster', 'video'];
 
@@ -17,8 +19,19 @@ function renditionUrl(raw, name) {
 
 function senderOf(raw) {
   const s = raw.sender ?? raw.user ?? raw.from ?? null;
-  if (s && typeof s === 'object') return { id: s.id ?? null, name: s.name ?? '' };
-  return { id: raw.user_id ?? null, name: typeof s === 'string' ? s : raw.user_name ?? raw.sender_name ?? '' };
+  if (s && typeof s === 'object') return { id: s.id ?? null, name: s.name ?? '', shortName: s.short_name ?? '' };
+  return {
+    id: raw.user_id ?? null,
+    name: typeof s === 'string' ? s : raw.user_name ?? raw.sender_name ?? '',
+    shortName: raw.user_short_name ?? raw.sender_short_name ?? '',
+  };
+}
+
+/** What Grandma calls someone: their short_name ("Mike"), else the first word of their name. */
+export function shortName(name, short = '') {
+  const chosen = typeof short === 'string' ? short.trim().replace(/\s+/g, ' ') : '';
+  if (chosen) return chosen;
+  return (typeof name === 'string' ? name.trim().split(/\s+/)[0] : '') ?? '';
 }
 
 export function normalizeItem(raw) {
@@ -31,7 +44,8 @@ export function normalizeItem(raw) {
     caption: (raw.caption ?? '').trim(),
     batchId: raw.batch_id ?? null,
     senderId: sender.id,
-    senderName: sender.name.trim() || 'Your family',
+    // the frame names people the way Grandma does: "Mike", not "Michael Torres"
+    senderName: shortName(sender.name, sender.shortName) || 'Your family',
     createdAt: raw.ready_at ?? raw.created_at ?? 0,
     width: raw.width ?? urlsDim(raw, 'width'),
     height: raw.height ?? urlsDim(raw, 'height'),
@@ -53,11 +67,15 @@ export function normalizeList(list) {
   return (Array.isArray(list) ? list : []).map(normalizeItem).filter(Boolean);
 }
 
-/** The slideshow: photos newest first; video posters only when there are no photos at all. */
+/**
+ * The slideshow: photos and videos newest first, a video shown by its poster
+ * (it plays only when she taps it open). Videos stay here for good, so one she
+ * opened once, or one that left "New for you", can always be found again.
+ */
 export function slideshowItems(list) {
-  const items = normalizeList(list).filter((i) => i.display);
-  const photos = items.filter((i) => i.kind === 'photo');
-  return (photos.length ? photos : items).sort((a, b) => b.createdAt - a.createdAt);
+  return normalizeList(list)
+    .filter((i) => i.display)
+    .sort((a, b) => b.createdAt - a.createdAt);
 }
 
 /**
@@ -136,5 +154,6 @@ export const REACTIONS = [
 export function familyPhotoUrl(value, fallbackItems = []) {
   if (typeof value === 'string' && value) return value;
   const item = value ? normalizeItem(value) ?? (value.url ? { display: value.url } : null) : null;
-  return item?.display ?? fallbackItems[0]?.display ?? null;
+  const fallback = fallbackItems.find((i) => i?.kind !== 'video') ?? fallbackItems[0];
+  return item?.display ?? fallback?.display ?? null;
 }

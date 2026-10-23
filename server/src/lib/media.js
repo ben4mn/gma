@@ -34,12 +34,13 @@ export const VOICE_TRIM_SECONDS = 65;
 
 // A tool exited badly. `stderr` keeps only the tail; it never reaches a person.
 export class MediaToolError extends Error {
-  constructor(message, { tool, code = null, stderr = '' } = {}) {
+  constructor(message, { tool, code = null, stderr = '', timedOut = false } = {}) {
     super(message);
     this.name = 'MediaToolError';
     this.tool = tool;
     this.exitCode = code;
     this.stderr = stderr;
+    this.timedOut = timedOut; // the tool ran past its time limit (trying again would too)
   }
 }
 
@@ -111,7 +112,9 @@ export function exec(file, args, { signal, timeoutMs = 30 * 60 * 1000 } = {}) {
     };
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
-      finish(new MediaToolError(`${tool} took longer than ${Math.round(timeoutMs / 1000)} s`, { tool, stderr }));
+      finish(
+        new MediaToolError(`${tool} took longer than ${Math.round(timeoutMs / 1000)} s`, { tool, stderr, timedOut: true }),
+      );
     }, timeoutMs);
     timer.unref?.();
     signal?.addEventListener('abort', onAbort, { once: true });
@@ -188,16 +191,32 @@ export function parseProbe(json) {
 export const TONE_MAP_FILTER =
   'zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv';
 
+// 720 on the SHORT side, never upscaled: a landscape 1920x1080 becomes 1280x720,
+// a portrait 1080x1920 becomes 720x1280, a 480x854 clip stays as it is. ffmpeg
+// has already applied the rotation, so iw/ih are as displayed. The short side is
+// kept even (yuv420p needs it); -2 keeps the aspect ratio with an even long side.
+export const SCALE_FILTER =
+  "scale=w='if(gte(iw,ih),-2,min(720,trunc(iw/2)*2))':h='if(gte(iw,ih),min(720,trunc(ih/2)*2),-2)'";
+
 export function videoFilter({ hdr }) {
-  const scale = "scale=-2:'min(720,ih)',format=yuv420p";
+  const scale = `${SCALE_FILTER},format=yuv420p`;
   return hdr ? `${TONE_MAP_FILTER},${scale}` : scale;
 }
 
+// One video must not take every core of the shared server.
+export const FFMPEG_THREADS = '2';
+
 const QUIET = ['-hide_banner', '-nostdin', '-loglevel', 'error', '-y'];
 
-export function buildVideoArgs({ input, output, hdr = false }) {
+// The transcode never takes more than the limit plus a second, whatever the
+// container claims its length is (a stream with no duration, or a short header
+// over a long sample table): the job then probes the result against the limit.
+export function buildVideoArgs({ input, output, hdr = false, maxSeconds = null }) {
+  const cap = Number.isFinite(maxSeconds) && maxSeconds > 0 ? ['-t', String(Math.ceil(maxSeconds) + 1)] : [];
   return [
     ...QUIET,
+    '-filter_threads', FFMPEG_THREADS,
+    '-threads', FFMPEG_THREADS,
     '-i', input,
     '-map', '0:v:0',
     '-map', '0:a:0?',
@@ -205,6 +224,7 @@ export function buildVideoArgs({ input, output, hdr = false }) {
     '-map_chapters', '-1',
     '-vf', videoFilter({ hdr }),
     '-c:v', 'libx264',
+    '-threads', FFMPEG_THREADS,
     '-profile:v', 'high',
     '-preset', 'veryfast',
     '-crf', '23',
@@ -213,10 +233,18 @@ export function buildVideoArgs({ input, output, hdr = false }) {
     '-c:a', 'aac',
     '-b:a', '128k',
     '-ac', '2',
+    ...cap,
     '-movflags', '+faststart',
     '-f', 'mp4',
     output,
   ];
+}
+
+// A transcode's time limit: generous for a real video of `maxSeconds` on two
+// threads, but bounded, so one crafted file can't hold the video queue.
+export function videoTimeoutMs(maxSeconds) {
+  const seconds = Number.isFinite(maxSeconds) && maxSeconds > 0 ? maxSeconds : 180;
+  return Math.min(30 * 60_000, Math.max(5 * 60_000, seconds * 4 * 1000));
 }
 
 // The poster frame: 1 s in, or the first frame of a clip shorter than that.
@@ -228,6 +256,8 @@ export function buildPosterArgs({ input, output, durationMs, hdr = false }) {
   const filter = hdr ? `${TONE_MAP_FILTER},format=rgb24` : 'format=rgb24';
   return [
     ...QUIET,
+    '-filter_threads', FFMPEG_THREADS,
+    '-threads', FFMPEG_THREADS,
     '-ss', String(posterSeconds(durationMs)),
     '-i', input,
     '-map', '0:v:0',
@@ -290,8 +320,11 @@ export function createMediaTools({ exec: run = exec, which = findBinary } = {}) 
         throw new MediaToolError('ffprobe printed something that was not JSON', { tool: 'ffprobe' });
       }
     },
-    async transcodeVideo({ input, output, hdr }, { signal } = {}) {
-      await run(binary('ffmpeg'), buildVideoArgs({ input, output, hdr }), { signal });
+    async transcodeVideo({ input, output, hdr, maxSeconds = null }, { signal } = {}) {
+      await run(binary('ffmpeg'), buildVideoArgs({ input, output, hdr, maxSeconds }), {
+        signal,
+        timeoutMs: videoTimeoutMs(maxSeconds),
+      });
     },
     async extractPoster({ input, output, durationMs, hdr }, { signal } = {}) {
       await run(binary('ffmpeg'), buildPosterArgs({ input, output, durationMs, hdr }), { signal, timeoutMs: 120_000 });
@@ -366,9 +399,28 @@ export function isHeif(mime) {
 // ---------------------------------------------------------------------------
 // sharp stills
 
+// The largest image we decode: a 48 MP phone photo fits with room to spare,
+// while a crafted "decompression bomb" is refused before it eats the memory.
+export const MAX_INPUT_PIXELS = 120_000_000;
+const SHARP_INPUT = { failOn: 'error', limitInputPixels: MAX_INPUT_PIXELS };
+
+// The pixel count of the largest image a HEIF/HEIC file declares (its `ispe`
+// boxes, which sit in the `meta` box at the front of the file), or null when
+// none is found in `head`. Checked before heif-dec, which has no limit of its own.
+export function heifDeclaredPixels(head) {
+  let largest = null;
+  for (let at = head.indexOf('ispe'); at !== -1 && at + 16 <= head.length; at = head.indexOf('ispe', at + 4)) {
+    const width = head.readUInt32BE(at + 8);
+    const height = head.readUInt32BE(at + 12);
+    const pixels = width * height;
+    if (largest === null || pixels > largest) largest = pixels;
+  }
+  return largest;
+}
+
 // The image's size once EXIF orientation is applied.
 export async function orientedSize(input) {
-  const meta = await sharp(input, { failOn: 'error' }).metadata();
+  const meta = await sharp(input, SHARP_INPUT).metadata();
   const swap = (meta.orientation ?? 1) >= 5;
   return { width: swap ? meta.height : meta.width, height: swap ? meta.width : meta.height };
 }
@@ -376,7 +428,7 @@ export async function orientedSize(input) {
 // Writes one still rendition to `output`: auto-oriented, fit inside size×size,
 // never enlarged, metadata (EXIF, GPS) dropped (sharp's default).
 export async function renderStill(input, spec, output) {
-  let pipeline = sharp(input, { failOn: 'error' })
+  let pipeline = sharp(input, SHARP_INPUT)
     .autoOrient()
     .resize({ width: spec.size, height: spec.size, fit: 'inside', withoutEnlargement: true });
   pipeline =

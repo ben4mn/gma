@@ -95,19 +95,20 @@ describe('database', () => {
     await fs.rm(dir, { recursive: true, force: true });
   });
 
-  test('openDb sets the pragmas and applies 001_init once', () => {
+  test('openDb sets the pragmas and applies every migration once', () => {
     const file = path.join(dir, 'a', 'gma.sqlite');
     const db = openDb(file);
     assert.equal(db.pragma('journal_mode', { simple: true }), 'wal');
     assert.equal(db.pragma('foreign_keys', { simple: true }), 1);
     assert.equal(db.pragma('busy_timeout', { simple: true }), 5000);
     const applied = db.prepare('SELECT name FROM schema_migrations').all().map((r) => r.name);
-    assert.deepEqual(applied, ['001_init.sql']);
+    assert.deepEqual(applied, listMigrations());
+    assert.deepEqual(applied.slice(0, 3), ['001_init.sql', '002_short_names.sql', '003_invite_created_user.sql']);
     assert.deepEqual(migrate(db), [], 'a second run applies nothing');
     db.close();
 
     const reopened = openDb(file);
-    assert.equal(reopened.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get().n, 1);
+    assert.equal(reopened.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get().n, listMigrations().length);
     reopened.close();
   });
 
@@ -262,6 +263,11 @@ describe('settings, storage and redaction', () => {
     assert.equal(redactUrl('/x?TOKEN=1&code=2&keep=3'), '/x?TOKEN=REDACTED&code=REDACTED&keep=3');
     assert.equal(redactUrl('/api/items?before=01ABC'), '/api/items?before=01ABC');
     assert.equal(redactUrl('/plain'), '/plain');
+    // Invite tokens travel in the path (SEC-3).
+    assert.equal(redactUrl('/join/abcDEF_123-xyz'), '/join/REDACTED');
+    assert.equal(redactUrl('/api/invites/abcDEF_123/accept'), '/api/invites/REDACTED/accept');
+    assert.equal(redactUrl('/api/invites/abc?x=1&token=2'), '/api/invites/REDACTED?x=1&token=REDACTED');
+    assert.equal(redactUrl('/api/items/01ABC'), '/api/items/01ABC');
     assert.equal(stripSecretParams('/grandma/?device=abc&x=1'), '/grandma/?x=1');
     assert.equal(stripSecretParams('/mine?t=1'), '/mine');
   });
@@ -280,7 +286,8 @@ describe('email', () => {
     assert.match(box[0].subject, /042917/);
     assert.match(box[0].text, /042917/);
     assert.match(box[0].text, /confirm\?t=abc/);
-    assert.match(box[0].html, /Sign in on this phone/);
+    assert.match(box[0].html, /Sign in with this link/);
+    assert.match(box[0].text, /Using the app on your Home Screen\? Type the code there\./);
     assert.equal(captureEmails(other).length, 0);
     await fs.rm(dir, { recursive: true, force: true });
   });

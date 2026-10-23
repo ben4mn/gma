@@ -9,11 +9,16 @@
 // reconnect the browser sends Last-Event-ID and missed events are replayed.
 // If too many were missed, or some were already pruned, a `resync` event
 // (data {}) tells the client to reload its state instead.
+//
+// About once a minute each stream re-checks its session: a person who was
+// removed, a frame that was unpaired or a session that ended loses the stream.
 
 import { audienceMatches, eventsAfter } from '../lib/events.js';
 import { requireUserOrDevice } from '../lib/guards.js';
+import { isSessionLive } from '../lib/sessions.js';
 
 const HEARTBEAT_MS = 25_000;
+const SESSION_CHECK_MS = 60_000;
 const MAX_REPLAY = 500;
 
 function parseLastEventId(request) {
@@ -40,6 +45,7 @@ function replay(db, client, lastEventId, cursor) {
 
 export default async function eventRoutes(app, opts) {
   const heartbeatMs = opts.sseHeartbeatMs ?? HEARTBEAT_MS;
+  const sessionCheckMs = opts.sseSessionCheckMs ?? SESSION_CHECK_MS;
 
   app.get('/api/events', { preHandler: requireUserOrDevice }, (request, reply) => {
     const client = request.device ? { deviceId: request.device.id } : { userId: request.user.id };
@@ -63,10 +69,26 @@ export default async function eventRoutes(app, opts) {
     const heartbeat = setInterval(() => write(': ping\n\n'), heartbeatMs);
     heartbeat.unref();
 
+    const sessionId = request.session.id;
+    const sessionCheck = setInterval(() => {
+      let live = true;
+      try {
+        live = isSessionLive(app.db, sessionId);
+      } catch (err) {
+        request.log.warn({ err }, 'Could not re-check an SSE session; keeping the stream');
+      }
+      if (!live) {
+        request.log.info({ session: sessionId }, 'Closing a live stream whose session ended');
+        close();
+      }
+    }, sessionCheckMs);
+    sessionCheck.unref();
+
     const close = () => {
       if (!open) return;
       open = false;
       clearInterval(heartbeat);
+      clearInterval(sessionCheck);
       unsubscribe();
       res.end();
     };

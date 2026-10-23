@@ -10,7 +10,7 @@
 
 import { httpError, requireUser } from '../lib/guards.js';
 import { countPasskeys, deletePasskey, listPasskeys, userHandleB64 } from '../lib/webauthn.js';
-import { publicUser, takePasskeyOffer } from './auth.js';
+import { publicUser, takePasskeyOffer } from '../lib/login.js';
 
 export default async function meRoutes(app, { config, db }) {
   app.get('/api/me', { preHandler: requireUser }, async (request, reply) => {

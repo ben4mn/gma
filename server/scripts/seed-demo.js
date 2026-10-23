@@ -21,7 +21,7 @@ import sharp from 'sharp';
 import { newId } from '../src/lib/ids.js';
 import { createStorage } from '../src/lib/storage.js';
 import { HOUR, MINUTE } from '../src/lib/time.js';
-import { logAdmin, pairDevice } from '../src/routes/admin.js';
+import { logAdmin, pairDevice } from '../src/lib/admin.js';
 import { EXIT, openFromEnv, parseFlags, runIfMain } from './lib/cli.js';
 
 const run = promisify(execFile);
@@ -320,7 +320,7 @@ export async function main(argv, { env = process.env, out = console, ffmpeg } = 
     const summary = await seedDemo({
       config,
       db,
-      storage: createStorage(config.mediaDir),
+      storage: createStorage(config.mediaDir, { sentinel: config.mediaSentinel }),
       photosDir: flags.photos ? path.resolve(flags.photos) : DEFAULT_PHOTOS_DIR,
       ffmpeg: flags['no-video'] ? null : (ffmpeg !== undefined ? ffmpeg : findFfmpeg()),
       log: (line) => out.log(line),

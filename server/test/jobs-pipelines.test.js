@@ -1,16 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import sharp from 'sharp';
 import { makeTestApp, makeUser, makeDevice } from './helpers/index.js';
 import { LANDSCAPE_JPG, makeJpeg, makePng } from './fixtures/images.js';
 import { newId } from '../src/lib/ids.js';
 import { eventsAfter, latestEventId } from '../src/lib/events.js';
-import { createMediaTools } from '../src/lib/media.js';
+import { MAX_INPUT_PIXELS, MediaToolError, createMediaTools, heifDeclaredPixels, orientedSize, renderStill } from '../src/lib/media.js';
 import { setSetting } from '../src/lib/settings.js';
 import { enqueue, claim } from '../src/jobs/queue.js';
 import { startRunner } from '../src/jobs/runner.js';
 import * as imageJob from '../src/jobs/image.js';
+import { TOO_BIG_MESSAGE } from '../src/jobs/image.js';
 import * as videoJob from '../src/jobs/video.js';
 import * as voiceJob from '../src/jobs/voice.js';
 
@@ -131,6 +134,49 @@ test('HEIC goes through heif-dec first', async (t) => {
   assert.equal(renditions(ctx, id).display.width, 1600);
 });
 
+// A HEIF `ispe` box (image spatial extents): size, type, version/flags, width, height.
+function ispe(width, height) {
+  const box = Buffer.alloc(20);
+  box.writeUInt32BE(20, 0);
+  box.write('ispe', 4, 'latin1');
+  box.writeUInt32BE(width, 12);
+  box.writeUInt32BE(height, 16);
+  return box;
+}
+
+test('a HEIC that declares a giant image is refused before heif-dec decodes it (SEC-5)', async (t) => {
+  const ctx = await makeTestApp();
+  t.after(ctx.cleanup);
+  assert.equal(heifDeclaredPixels(Buffer.concat([Buffer.from('ftypheic'), ispe(512, 512), ispe(8064, 6048)])), 8064 * 6048);
+  assert.equal(heifDeclaredPixels(Buffer.from('no boxes here')), null);
+
+  const exec = fakeExec();
+  const bomb = Buffer.concat([Buffer.from('....ftypheic....meta'), ispe(40000, 40000)]);
+  const { id } = await addItem(ctx, { mime: 'image/heic', ext: 'heic', bytes: bomb });
+  const media = createMediaTools({ exec: exec.run, which: (n) => `/fake/${n}` });
+  await assert.rejects(imageJob.run(jobCtx(ctx, media), { ref_id: id }), (err) => err.permanent && err.userMessage === TOO_BIG_MESSAGE);
+  assert.ok(!exec.calls.some((c) => c.tool === 'heif-dec'), 'never decoded');
+
+  // A 48 MP iPhone photo is fine.
+  const phone = await addItem(ctx, { mime: 'image/heic', ext: 'heic', bytes: Buffer.concat([Buffer.from('ftypheic'), ispe(8064, 6048)]) });
+  await imageJob.run(jobCtx(ctx, media), { ref_id: phone.id });
+  assert.equal(ctx.db.prepare('SELECT status FROM items WHERE id = ?').get(phone.id).status, 'ready');
+});
+
+test('sharp refuses images over the pixel cap (SEC-5)', async () => {
+  assert.equal(MAX_INPUT_PIXELS, 120_000_000);
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'gma-pixels-'));
+  try {
+    // 11000 × 11000 = 121 MP of one colour: tiny as a PNG, huge decoded.
+    const big = path.join(dir, 'big.png');
+    await sharp({ create: { width: 11000, height: 11000, channels: 3, background: '#fff' } }).png().toFile(big);
+    await assert.rejects(orientedSize(big), /pixel limit/i);
+    await assert.rejects(renderStill(big, { size: 480, format: 'webp', quality: 72 }, path.join(dir, 'out.webp')), /pixel limit/i);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('an unreadable photo fails for good with a kind message for its owner', async (t) => {
   const ctx = await makeTestApp();
   t.after(ctx.cleanup);
@@ -195,8 +241,10 @@ test('a video is transcoded with the contract\'s settings, gets a poster and thu
 
   const transcode = exec.calls.find((c) => c.tool === 'ffmpeg' && c.args.includes('libx264'));
   const vf = transcode.args[transcode.args.indexOf('-vf') + 1];
-  assert.equal(vf, "scale=-2:'min(720,ih)',format=yuv420p", 'SDR: no tone map');
+  assert.equal(vf, "scale=w='if(gte(iw,ih),-2,min(720,trunc(iw/2)*2))':h='if(gte(iw,ih),min(720,trunc(ih/2)*2),-2)',format=yuv420p", 'SDR: no tone map');
+  assert.equal(transcode.args[transcode.args.indexOf('libx264') + 1], '-threads', 'the encoder is capped');
   for (const flag of ['-map_metadata', '-movflags', '+faststart', 'aac', '128k']) assert.ok(transcode.args.includes(flag), flag);
+  assert.equal(transcode.args[transcode.args.indexOf('-t') + 1], '181', 'never more than the limit plus a second');
   const poster = exec.calls.find((c) => c.tool === 'ffmpeg' && c.args.includes('png'));
   assert.equal(poster.args[poster.args.indexOf('-ss') + 1], '1');
 });
@@ -208,7 +256,7 @@ test('HDR video is tone-mapped, and a sub-second clip takes its poster at 0 s', 
   const { id } = await addItem(ctx, { kind: 'video', mime: 'video/quicktime', ext: 'mov', bytes: Buffer.from('mov') });
   await videoJob.run(jobCtx(ctx, createMediaTools({ exec: exec.run, which: (n) => `/fake/${n}` })), { ref_id: id });
   const transcode = exec.calls.find((c) => c.args.includes('libx264'));
-  assert.match(transcode.args[transcode.args.indexOf('-vf') + 1], /^zscale=t=linear.*tonemap=tonemap=hable.*scale=-2:'min\(720,ih\)',format=yuv420p$/);
+  assert.match(transcode.args[transcode.args.indexOf('-vf') + 1], /^zscale=t=linear.*tonemap=tonemap=hable.*,scale=w=.*,format=yuv420p$/);
   const poster = exec.calls.find((c) => c.args.includes('png'));
   assert.equal(poster.args[poster.args.indexOf('-ss') + 1], '0');
   assert.match(poster.args[poster.args.indexOf('-vf') + 1], /tonemap/);
@@ -331,4 +379,65 @@ test('the voice job works without lib/push.js and marks a hopeless note failed',
   const bad = await addVoiceNote(ctx);
   voiceJob.onFailed({ db: ctx.db }, { ref_id: bad.id });
   assert.equal(ctx.db.prepare('SELECT status FROM voice_notes WHERE id = ?').get(bad.id).status, 'failed');
+});
+
+// SEC-4: a video whose length the container doesn't say is measured after a
+// capped transcode, and a transcode that runs out of time doesn't retry.
+async function runVideo(ctx, run) {
+  const { id } = await addItem(ctx, { kind: 'video', mime: 'video/webm', ext: 'webm', bytes: Buffer.from('webm') });
+  enqueue(ctx.db, { kind: 'video', refId: id });
+  const runner = startRunner({
+    config: ctx.config,
+    db: ctx.db,
+    storage: ctx.app.storage,
+    media: createMediaTools({ exec: run, which: (n) => `/fake/${n}` }),
+    pollMs: 60_000,
+  });
+  runner.tick();
+  await runner.drain();
+  await runner.stop();
+  return {
+    item: ctx.db.prepare('SELECT * FROM items WHERE id = ?').get(id),
+    job: ctx.db.prepare('SELECT attempts, status FROM jobs WHERE ref_id = ?').get(id),
+  };
+}
+
+const noDuration = () => {
+  const p = probe();
+  delete p.format.duration;
+  return p;
+};
+
+test('a video with no duration up front is measured after the capped transcode (SEC-4)', async (t) => {
+  const ctx = await makeTestApp();
+  t.after(ctx.cleanup);
+  const long = fakeExec({ originals: noDuration(), renditions: probe({ seconds: 181 }) });
+  const { item, job } = await runVideo(ctx, long.run);
+  assert.equal(item.status, 'failed');
+  assert.equal(item.error, 'This video is longer than 3 minutes. Please trim it and send it again.');
+  assert.equal(job.attempts, 1, 'no retries');
+  const transcode = long.calls.find((c) => c.args.includes('libx264'));
+  assert.equal(transcode.args[transcode.args.indexOf('-t') + 1], '181');
+
+  const short = fakeExec({ originals: noDuration(), renditions: probe({ seconds: 20 }) });
+  const ok = await runVideo(ctx, short.run);
+  assert.equal(ok.item.status, 'ready');
+  assert.equal(ok.item.duration_ms, 20000, 'the measured length is kept');
+});
+
+test('a transcode that runs out of time fails for good instead of retrying (SEC-4)', async (t) => {
+  const ctx = await makeTestApp();
+  t.after(ctx.cleanup);
+  const exec = fakeExec({ default: probe({ seconds: 30 }) });
+  const slow = async (file, args, opts) => {
+    if (args.includes('libx264')) {
+      assert.ok(opts.timeoutMs <= 30 * 60_000 && opts.timeoutMs >= 5 * 60_000, 'a bounded time limit');
+      throw new MediaToolError('ffmpeg took longer than 720 s', { tool: 'ffmpeg', timedOut: true });
+    }
+    return exec.run(file, args, opts);
+  };
+  const { item, job } = await runVideo(ctx, slow);
+  assert.equal(item.status, 'failed');
+  assert.equal(item.error, 'This video took too long to get ready. Please trim it and send it again.');
+  assert.equal(job.attempts, 1);
 });

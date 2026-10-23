@@ -52,6 +52,64 @@ function section(slot, loader) {
   reload();
 }
 
+// Must match the server's limit (server/src/lib/people.js).
+const MAX_SHORT_NAME = 30;
+
+/** What Grandma's frame calls someone ("Mike", "Grandpa Joe"); it defaults to the first word of their name. */
+export function grandmaNameOf(person) {
+  const chosen = typeof person?.short_name === 'string' ? person.short_name.trim() : '';
+  return chosen || (typeof person?.name === 'string' ? person.name.trim().split(/\s+/)[0] : '') || '';
+}
+
+/** "Grandma calls them Mike · Change", which opens a one-line form. Saves with PATCH /api/admin/people/:id. */
+function grandmaName(person) {
+  const wrap = h('div', { class: 'grandma-name' });
+  const fieldId = `short-${person.id}`;
+  let current = grandmaNameOf(person);
+  let saved = '';
+
+  const showLine = () => mount(wrap,
+    h('p', { class: 'card-meta' }, 'Grandma calls them ', h('b', null, current || 'nothing yet'), saved ? ` · ${saved}` : null),
+    h('button', { type: 'button', class: 'btn btn--quiet', 'aria-label': `Change what Grandma calls ${person.name}`, onclick: showForm }, 'Change'));
+
+  function showForm() {
+    const input = h('input', { class: 'input', id: fieldId, value: current, maxlength: String(MAX_SHORT_NAME), autocomplete: 'off', autocapitalize: 'words', enterkeyhint: 'done' });
+    const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
+    const save = h('button', { type: 'submit', class: 'btn btn--sage' }, 'Save');
+    const form = h('form', { class: 'grandma-name-form', novalidate: true },
+      h('div', { class: 'field' },
+        h('label', { for: fieldId }, 'What Grandma calls them'),
+        h('small', null, `Shown on her frame: “3 photos from ${current || 'Mike'}”.`),
+        input),
+      error,
+      h('div', { class: 'row' }, save, h('button', { type: 'button', class: 'btn btn--quiet', onclick: () => { saved = ''; showLine(); } }, 'Cancel')));
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const value = input.value.trim().replace(/\s+/g, ' ');
+      error.hidden = true;
+      if (!value) { error.textContent = 'Add the name Grandma knows them by.'; error.hidden = false; return; }
+      save.disabled = true;
+      try {
+        const res = await api.patch(`/api/admin/people/${encodeURIComponent(person.id)}`, { short_name: value });
+        const stored = (res?.user ?? res?.person)?.short_name;
+        current = typeof stored === 'string' && stored.trim() ? stored.trim() : value;
+        person.short_name = current;
+        saved = 'saved';
+        showLine();
+      } catch (err) {
+        error.textContent = err.message;
+        error.hidden = false;
+        save.disabled = false;
+      }
+    });
+    mount(wrap, form);
+    input.focus();
+  }
+
+  showLine();
+  return wrap;
+}
+
 function people(slot) {
   const created = h('div');
   const name = h('input', { class: 'input', id: 'inv-name', autocomplete: 'off' });
@@ -78,12 +136,14 @@ function people(slot) {
         `${inv.email || 'No email'} · expires ${whenLabel(inv.expires_at)}`,
         confirmButton({ label: 'Cancel invite', confirmLabel: 'Tap again to cancel', onConfirm: async () => { await api.del(`/api/admin/invites/${encodeURIComponent(inv.id)}`); reload(); } }))))] : null,
       h('h2', { class: 'section-title' }, `Family (${users.filter((u) => u.status !== 'removed').length})`),
-      h('div', { class: 'card' }, users.map((u) => row(
-        u.name,
-        [u.email, u.role === 'admin' ? 'admin' : null, u.status === 'pending' ? 'hasn’t signed in yet' : null, u.status === 'removed' ? 'removed' : null].filter(Boolean).join(' · '),
-        u.status === 'removed'
-          ? h('button', { type: 'button', class: 'btn btn--quiet', onclick: async () => { await api.post(`/api/admin/people/${encodeURIComponent(u.id)}/restore`); reload(); } }, 'Restore')
-          : confirmButton({ label: 'Remove', confirmLabel: 'Tap again: signs them out everywhere', onConfirm: async () => { await api.post(`/api/admin/people/${encodeURIComponent(u.id)}/remove`); reload(); } })))));
+      h('div', { class: 'card' }, users.map((u) => h('div', { class: 'person' },
+        row(
+          u.name,
+          [u.email, u.role === 'admin' ? 'admin' : null, u.status === 'pending' ? 'hasn’t signed in yet' : null, u.status === 'removed' ? 'removed' : null].filter(Boolean).join(' · '),
+          u.status === 'removed'
+            ? h('button', { type: 'button', class: 'btn btn--quiet', onclick: async () => { await api.post(`/api/admin/people/${encodeURIComponent(u.id)}/restore`); reload(); } }, 'Restore')
+            : confirmButton({ label: 'Remove', confirmLabel: 'Tap again: signs them out everywhere', onConfirm: async () => { await api.post(`/api/admin/people/${encodeURIComponent(u.id)}/remove`); reload(); } })),
+        u.status === 'removed' ? null : grandmaName(u)))));
   };
   section(lists, loadLists);
 

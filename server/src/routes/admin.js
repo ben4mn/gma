@@ -2,14 +2,17 @@
 // messages, night hours and a health summary. Every route needs an admin, every
 // response is no-store, and every change writes an admin_log row (never a token).
 //
-// The named exports (pairDevice, ensureAdmin, deleteItem, logAdmin, …) are
-// shared with the CLIs in server/scripts/.
+// The helpers the CLIs share (pairDevice, ensureAdmin, deleteItem, logAdmin, …)
+// live in lib/admin.js.
 
 import fs from 'node:fs/promises';
+import { cleanEmail, cleanName, deleteItem, logAdmin, pairDevice, publicDevice } from '../lib/admin.js';
 import { inviteEmail, sendEmail } from '../lib/email.js';
 import { publish } from '../lib/events.js';
 import { httpError, requireAdmin } from '../lib/guards.js';
 import { isId, newId } from '../lib/ids.js';
+import { MAX_SHORT_NAME_LENGTH, shortNameOf } from '../lib/people.js';
+import { perIp } from '../lib/rate-limits.js';
 import { revokeDeviceSessions, revokeUserSessions } from '../lib/sessions.js';
 import { getSetting, getSettings, setSettings } from '../lib/settings.js';
 import { DAY, isValidClockTime } from '../lib/time.js';
@@ -19,7 +22,6 @@ export const INVITE_LIFE_MS = 14 * DAY;
 export const MAX_ACTIVE_PRESETS = 8; // what fits on Grandma's screen
 const MAX_PRESETS = 30;
 const MAX_PRESET_LENGTH = 40;
-const MAX_NAME_LENGTH = 80;
 const ITEM_STATUSES = new Set(['processing', 'ready', 'failed', 'hidden']);
 const RENDITION_FIELDS = 'item_id, name, mime, width, height, bytes';
 
@@ -36,22 +38,6 @@ function bodyOf(request) {
     throw bad('bad_request', "That request didn't look right. Please try again.");
   }
   return body;
-}
-
-export function cleanName(value, { what = 'their name', max = MAX_NAME_LENGTH } = {}) {
-  const name = typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : '';
-  if (!name) throw bad('name_required', `Add ${what}.`);
-  if (name.length > max) throw bad('name_too_long', `That name is too long. Keep it under ${max} letters.`);
-  return name;
-}
-
-export function cleanEmail(value) {
-  const email = typeof value === 'string' ? value.trim() : '';
-  if (!email) return null;
-  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    throw bad('bad_email', "That email address doesn't look right. Please check it.");
-  }
-  return email;
 }
 
 function cleanRole(value) {
@@ -108,106 +94,13 @@ export function validateSettings(input) {
 }
 
 // ---------------------------------------------------------------------------
-// Shared helpers (also used by the CLIs)
-
-export function logAdmin(db, { userId = null, action, target = null, detail = null }) {
-  db.prepare('INSERT INTO admin_log (id, user_id, action, target, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(
-    newId(),
-    userId,
-    action,
-    target,
-    detail === null ? null : JSON.stringify(detail),
-    Date.now(),
-  );
-}
-
-export function pairingUrl(publicUrl, token) {
-  return `${publicUrl}/grandma?device=${encodeURIComponent(token)}`;
-}
-
-// Makes a device and its pairing token. The token is returned once and only its hash is kept.
-export function pairDevice(db, { name, createdBy = null, publicUrl }) {
-  const token = randomToken(32);
-  const device = {
-    id: newId(),
-    name,
-    token_hash: sha256(token),
-    created_by: createdBy,
-    created_at: Date.now(),
-    last_seen_at: null,
-    revoked_at: null,
-  };
-  db.prepare(
-    `INSERT INTO devices (id, name, token_hash, created_by, created_at, last_seen_at, revoked_at)
-     VALUES (@id, @name, @token_hash, @created_by, @created_at, @last_seen_at, @revoked_at)`,
-  ).run(device);
-  return { device: publicDevice(device), token, url: pairingUrl(publicUrl, token) };
-}
-
-// Creates an active admin, or promotes/restores the person who has that email.
-// Returns { user, outcome } with outcome 'created' | 'promoted' | 'restored' | 'unchanged'.
-export function ensureAdmin(db, { name, email }) {
-  return db.transaction(() => {
-    const existing = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
-    const now = Date.now();
-    if (!existing) {
-      const user = {
-        id: newId(now),
-        name,
-        email,
-        role: 'admin',
-        status: 'active',
-        color: null,
-        created_at: now,
-        activated_at: now,
-        removed_at: null,
-      };
-      db.prepare(
-        `INSERT INTO users (id, name, email, role, status, color, created_at, activated_at, removed_at)
-         VALUES (@id, @name, @email, @role, @status, @color, @created_at, @activated_at, @removed_at)`,
-      ).run(user);
-      return { user, outcome: 'created' };
-    }
-    if (existing.role === 'admin' && existing.status === 'active') return { user: existing, outcome: 'unchanged' };
-    const outcome = existing.status === 'removed' ? 'restored' : 'promoted';
-    db.prepare(
-      `UPDATE users SET role = 'admin', status = 'active', removed_at = NULL,
-         activated_at = COALESCE(activated_at, ?) WHERE id = ?`,
-    ).run(now, existing.id);
-    return { user: db.prepare('SELECT * FROM users WHERE id = ?').get(existing.id), outcome };
-  })();
-}
-
-// Deletes an item, its renditions, its original, any voice notes left on it and
-// its pending jobs. Grandma's reactions on it stay in her feed (item_id → NULL).
-// Returns false when there was no such item.
-export async function deleteItem(db, storage, itemId, { log = null } = {}) {
-  const item = db.prepare('SELECT id, original_path FROM items WHERE id = ?').get(itemId);
-  if (!item) return false;
-  const notes = db.prepare('SELECT id, original_path FROM voice_notes WHERE item_id = ?').all(itemId);
-
-  db.transaction(() => {
-    const refs = [itemId, ...notes.map((n) => n.id)];
-    db.prepare(`DELETE FROM jobs WHERE ref_id IN (${refs.map(() => '?').join(',')})`).run(...refs);
-    db.prepare('DELETE FROM items WHERE id = ?').run(itemId); // cascades renditions, views, voice notes
-  })();
-
-  // The rows are gone; a file that won't delete is only wasted space, so log it and carry on.
-  const removals = [storage.remove(item.original_path), storage.removeRenditions(itemId)];
-  for (const note of notes) removals.push(storage.remove(note.original_path), storage.removeRenditions(note.id));
-  for (const result of await Promise.allSettled(removals)) {
-    if (result.status === 'rejected') log?.warn({ err: result.reason, itemId }, 'Could not delete a media file');
-  }
-  return true;
-}
-
-// ---------------------------------------------------------------------------
 // Response shapes
 
 function publicUser(row) {
   return {
     id: row.id,
     name: row.name,
+    short_name: shortNameOf(row),
     email: row.email,
     role: row.role,
     status: row.status,
@@ -229,17 +122,6 @@ function publicInvite(row) {
     used_at: row.used_at,
     revoked_at: row.revoked_at,
     created_at: row.created_at,
-  };
-}
-
-function publicDevice(row) {
-  return {
-    id: row.id,
-    name: row.name,
-    created_by: row.created_by,
-    created_at: row.created_at,
-    last_seen_at: row.last_seen_at,
-    revoked_at: row.revoked_at,
   };
 }
 
@@ -268,7 +150,13 @@ function publicItem(row, renditions) {
     created_at: row.created_at,
     ready_at: row.ready_at,
     hidden_at: row.hidden_at,
-    user: { id: row.user_id, name: row.user_name, color: row.user_color, status: row.user_status },
+    user: {
+      id: row.user_id,
+      name: row.user_name,
+      short_name: shortNameOf({ name: row.user_name, short_name: row.user_short_name }),
+      color: row.user_color,
+      status: row.user_status,
+    },
     renditions: byName,
   };
 }
@@ -325,7 +213,7 @@ export default async function adminRoutes(app, { config, db }) {
 
   app.post(
     '/api/admin/invites',
-    { config: { rateLimit: { max: 60, timeWindow: '1 hour' } } },
+    { config: perIp(60, '1 hour') },
     async (request, reply) => {
       const body = bodyOf(request);
       const name = cleanName(body.name);
@@ -354,8 +242,13 @@ export default async function adminRoutes(app, { config, db }) {
       let sentAt = null;
       if (send) {
         try {
-          await sendEmail(config, { to: email, ...inviteEmail({ name, inviterName: request.user.name, joinUrl: url }) });
-          sentAt = Date.now();
+          const result = await sendEmail(config, {
+            to: email,
+            ...inviteEmail({ name, inviterName: request.user.name, joinUrl: url }),
+          });
+          // Only a message a real transport accepted proves the address. One the
+          // console transport printed to the log is a shared link: it asks for a code.
+          if (!result?.printed) sentAt = Date.now();
         } catch (err) {
           request.log.warn({ err }, 'Invite email failed');
           // 424, not 502: 5xx bodies are always the generic sentence, and Ben needs this one.
@@ -400,16 +293,83 @@ export default async function adminRoutes(app, { config, db }) {
     },
   );
 
+  // Cancels an invite. One that was opened but whose person never finished
+  // signing in (still pending) can be cancelled too: its codes stop working and
+  // the pending person it made is taken off the list, so Ben can invite them again.
   app.delete('/api/admin/invites/:id', async (request) => {
     const id = idParam(request, 'invite');
     const invite = db.prepare('SELECT * FROM invites WHERE id = ?').get(id);
     if (!invite) throw httpError(404, 'not_found', "We couldn't find that invite.");
-    if (invite.used_at) throw httpError(409, 'invite_used', 'That invite was already used, so there is nothing to cancel.');
-    if (!invite.revoked_at) {
-      db.prepare('UPDATE invites SET revoked_at = ? WHERE id = ?').run(Date.now(), id);
-      log(request, 'invite.revoke', id, { email: invite.email });
+    const pending = invite.used_by
+      ? db.prepare("SELECT * FROM users WHERE id = ? AND status = 'pending'").get(invite.used_by)
+      : null;
+    if (invite.used_at && !pending) {
+      throw httpError(409, 'invite_used', 'That invite was already used, so there is nothing to cancel.');
+    }
+    if (!invite.revoked_at || pending) {
+      db.transaction(() => {
+        db.prepare('UPDATE invites SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?').run(Date.now(), id);
+        let codes = 0;
+        let removedPending = false;
+        if (pending) {
+          codes = db.prepare('DELETE FROM login_codes WHERE user_id = ? AND used_at IS NULL').run(pending.id).changes;
+          removedPending = forgetPendingPerson(pending.id);
+        }
+        log(request, 'invite.revoke', id, { email: invite.email, pending: pending?.id ?? null, codes, removedPending });
+      })();
     }
     return { invite: publicInvite(db.prepare('SELECT * FROM invites WHERE id = ?').get(id)) };
+  });
+
+  // A pending person exists only because an invite was opened. With the invite
+  // cancelled, they shouldn't be able to ask for a sign-in code with that email.
+  // They have never signed in, so nothing of theirs is lost; if a row still
+  // points at them, they are marked removed instead of deleted.
+  function forgetPendingPerson(userId) {
+    const otherInvites = db
+      .prepare('SELECT COUNT(*) AS n FROM invites WHERE used_by = ? AND revoked_at IS NULL')
+      .get(userId).n;
+    if (otherInvites > 0) return false; // another open invite still belongs to them
+    revokeUserSessions(db, userId);
+    try {
+      // A savepoint: if a row somewhere still points at them, undo just this part.
+      db.transaction(() => {
+        db.prepare('UPDATE invites SET used_by = NULL WHERE used_by = ?').run(userId);
+        db.prepare('UPDATE invites SET created_user_id = NULL WHERE created_user_id = ?').run(userId);
+        db.prepare("DELETE FROM users WHERE id = ? AND status = 'pending'").run(userId);
+      })();
+    } catch (err) {
+      if (err?.code !== 'SQLITE_CONSTRAINT_FOREIGNKEY') throw err;
+      db.prepare("UPDATE users SET status = 'removed', removed_at = ? WHERE id = ?").run(Date.now(), userId);
+    }
+    return true;
+  }
+
+  // Renames someone, or changes what Grandma calls them (the frame shows short_name).
+  app.patch('/api/admin/people/:id', async (request) => {
+    const id = idParam(request, 'person');
+    const body = bodyOf(request);
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    if (!user) throw httpError(404, 'not_found', "We couldn't find that person.");
+    const hasName = body.name !== undefined;
+    const hasShort = body.short_name !== undefined;
+    if (!hasName && !hasShort) throw bad('nothing_to_save', 'There was nothing to save.');
+    const name = hasName ? cleanName(body.name) : null;
+    const shortName = hasShort
+      ? cleanName(body.short_name, { what: 'what Grandma calls them', max: MAX_SHORT_NAME_LENGTH })
+      : null;
+
+    db.transaction(() => {
+      // The name first: a short name that was still the default follows a new name
+      // (migration 002's trigger); a short name sent with it then wins.
+      if (hasName && name !== user.name) db.prepare('UPDATE users SET name = ? WHERE id = ?').run(name, id);
+      if (hasShort) db.prepare('UPDATE users SET short_name = ? WHERE id = ?').run(shortName, id);
+      const fresh = db.prepare('SELECT name, short_name FROM users WHERE id = ?').get(id);
+      log(request, 'person.update', id, { name: fresh.name, short_name: fresh.short_name });
+      // The frame shows short names in its cards, so tell it to fetch its state again.
+      publish(db, 'settings.changed', { keys: ['people'] });
+    })();
+    return { user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(id)) };
   });
 
   app.post('/api/admin/people/:id/remove', async (request) => {
@@ -470,7 +430,7 @@ export default async function adminRoutes(app, { config, db }) {
     }
     const rows = db
       .prepare(
-        `SELECT i.*, u.name AS user_name, u.color AS user_color, u.status AS user_status
+        `SELECT i.*, u.name AS user_name, u.short_name AS user_short_name, u.color AS user_color, u.status AS user_status
          FROM items i JOIN users u ON u.id = i.user_id
          ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
          ORDER BY i.id DESC LIMIT ?`,
@@ -700,6 +660,8 @@ export default async function adminRoutes(app, { config, db }) {
       frame_last_seen: frameLastSeen,
       frames,
       worker_last_seen: getSetting(db, 'worker_last_seen', null),
+      last_snapshot_at: getSetting(db, 'last_snapshot_at', null),
+      last_snapshot: getSetting(db, 'last_snapshot', null),
       now: Date.now(),
     };
   });

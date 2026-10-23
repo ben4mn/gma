@@ -121,7 +121,7 @@ describe('GET /api/grandma-events', () => {
     assert.equal(reaction.reaction, 'love');
     assert.equal(typeof reaction.created_at, 'number');
     assert.equal(reaction.thumb_url, `/media/${ids.farm.id}/thumb?v=${ids.farm.ready_at}`);
-    assert.deepEqual(reaction.sender, { id: sarah.id, name: 'Sarah Lee' });
+    assert.deepEqual(reaction.sender, { id: sarah.id, name: 'Sarah Lee', short_name: 'Sarah' });
     assert.deepEqual(reaction.item, {
       id: ids.farm.id,
       kind: 'photo',
@@ -129,10 +129,10 @@ describe('GET /api/grandma-events', () => {
       ready_at: ids.farm.ready_at,
       available: true,
       thumb_url: `/media/${ids.farm.id}/thumb?v=${ids.farm.ready_at}`,
-      user: { id: sarah.id, name: 'Sarah Lee' },
+      user: { id: sarah.id, name: 'Sarah Lee', short_name: 'Sarah' },
     });
     // Mike sees Grandma's reaction to Sarah's photo too: the feed is shared.
-    assert.deepEqual(reaction.recipient, { id: sarah.id, name: 'Sarah Lee' });
+    assert.deepEqual(reaction.recipient, { id: sarah.id, name: 'Sarah Lee', short_name: 'Sarah' });
     assert.equal(reaction.recipient_name, 'Sarah Lee');
     assert.equal(reaction.voice_note, null);
 

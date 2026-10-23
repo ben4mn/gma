@@ -75,6 +75,11 @@ export async function run(ctx, job) {
   if (eventId) await notify(ctx, eventId);
 }
 
+// The voice note was deleted while the job ran: the runner then marks the job done.
+export function isGone({ db }, job) {
+  return !loadVoiceNote(db, job.ref_id);
+}
+
 export function onFailed({ db, log }, job) {
   db.prepare("UPDATE voice_notes SET status = 'failed' WHERE id = ? AND status = 'processing'").run(job.ref_id);
   log?.warn?.(`Voice note ${job.ref_id} could not be converted`);

@@ -7,7 +7,7 @@ import { api } from '../../shared/api.js';
 import { navigate } from '../router.js';
 import { hasPasskeyHint, setPasskeyHint } from '../session.js';
 import { detectInAppBrowser, openInBrowserSteps } from '../platform.js';
-import { passkeysSupported, prefetchOptions, fetchLoginOptions, fetchRegisterOptions, signInWithPasskey, registerPasskey } from '../passkeys.js';
+import { passkeysSupported, platformPasskeysAvailable, prefetchOptions, fetchLoginOptions, fetchRegisterOptions, signInWithPasskey, registerPasskey, registrationFailure } from '../passkeys.js';
 import { pageHead } from './shell.js';
 import { currentPlatform, installGuideView, isStandalone } from './prompts.js';
 
@@ -63,7 +63,10 @@ function afterSignIn(main, ctx, res) {
     if (!platform.standalone && platform.os !== 'other' && !sessionStorageFlag('gma.install.shown')) return installStep(main, next);
     navigate(next, { replace: true });
   };
-  if (res?.offer_passkey && passkeysSupported()) return passkeyOffer(main, finish);
+  // Only offered where the phone can actually make one (a screen lock is set).
+  if (res?.offer_passkey && passkeysSupported()) {
+    return platformPasskeysAvailable().then((ok) => (ok ? passkeyOffer(main, finish) : finish()));
+  }
   finish();
 }
 
@@ -88,21 +91,34 @@ function passkeyOffer(main, done) {
       setUp.textContent = ready ? 'Set it up' : 'Getting ready…';
     },
   });
+  let failures = 0;
+  const later = h('button', { type: 'button', class: 'btn btn--quiet', onclick: () => { prefetch.stop(); done(); } }, 'Not now');
   setUp.addEventListener('click', async () => {
     showError(error, '');
     const options = prefetch.take();
     if (!options) return showError(error, 'One moment, then tap again.');
     try {
-      await registerPasskey(options);
+      const result = await registerPasskey(options);
       setPasskeyHint(true);
       prefetch.stop();
       mount(main,
         pageHead({ title: 'All set' }),
-        h('p', { class: 'body-text' }, 'Next time, sign in with Face ID or your fingerprint. No code needed.'),
+        h('p', { class: 'body-text' }, result?.alreadySetUp
+          ? 'This phone already has Face ID sign-in set up. Next time, sign in with Face ID or your fingerprint.'
+          : 'Next time, sign in with Face ID or your fingerprint. No code needed.'),
         h('button', { type: 'button', class: 'btn btn--primary btn--block', onclick: done }, 'Continue'));
-    } catch (err) {
-      showError(error, err.message);
-      prefetch.refresh();
+    } catch {
+      failures += 1;
+      const { message, canRetry } = registrationFailure({ os: currentPlatform().os, failures });
+      showError(error, message);
+      if (canRetry) prefetch.refresh();
+      else {
+        // two tries is enough: only the way on is left
+        prefetch.stop();
+        setUp.remove();
+        later.textContent = 'Continue';
+        later.className = 'btn btn--primary btn--block';
+      }
     }
   });
   mount(main,
@@ -110,7 +126,7 @@ function passkeyOffer(main, done) {
     error,
     h('div', { class: 'stack' },
       setUp,
-      h('button', { type: 'button', class: 'btn btn--quiet', onclick: () => { prefetch.stop(); done(); } }, 'Not now')));
+      later));
 }
 
 function installStep(main, next) {
@@ -126,7 +142,13 @@ function installStep(main, next) {
 }
 
 /** The 6-digit code from the email. */
-function codeStep(main, ctx, email) {
+// Codes only go to an address someone was invited with: said on both screens,
+// so a typo never leaves a relative waiting for a code that isn't coming.
+export const ONLY_INVITED_LINE = 'We only send codes to the email address you were invited with. No code after a few minutes? Check your spam folder, or ask Ben.';
+
+// `onDifferentEmail`: from an invite, "Use a different email" goes back to the
+// invite form (accepting again fixes the address); elsewhere it goes to /signin.
+function codeStep(main, ctx, email, { onDifferentEmail = null } = {}) {
   const error = errorLine();
   const input = h('input', {
     class: 'input input--code', id: 'code', name: 'code',
@@ -173,7 +195,10 @@ function codeStep(main, ctx, email) {
         },
       }, 'Send me a new code'),
       resent,
-      h('a', { class: 'btn btn--quiet', href: '/signin' }, 'Use a different email')));
+      h('p', { class: 'body-text body-text--muted' }, ONLY_INVITED_LINE),
+      onDifferentEmail
+        ? h('button', { type: 'button', class: 'btn btn--quiet', onclick: onDifferentEmail }, 'Use a different email')
+        : h('a', { class: 'btn btn--quiet', href: '/signin' }, 'Use a different email')));
   input.focus();
 }
 
@@ -196,7 +221,10 @@ function emailForm({ onSubmit, label = 'Email me a code', primary = true, email 
 }
 
 export function signinScreen(main, ctx) {
-  const hint = hasPasskeyHint();
+  // The installed iPhone app doesn't share Safari's storage, so it can't know
+  // about the passkey made during onboarding; the only way into it led through
+  // that offer, so Face ID leads there.
+  const hint = hasPasskeyHint() || (isStandalone() && currentPlatform().os === 'ios');
   const canPasskey = passkeysSupported();
   const error = errorLine();
   let prefetch = null;
@@ -235,6 +263,7 @@ export function signinScreen(main, ctx) {
     error,
     canPasskey && hint ? h('div', { class: 'stack' }, passkeyBtn, h('p', { class: 'body-text body-text--muted' }, 'Or get a code by email:')) : null,
     form,
+    h('p', { class: 'body-text body-text--muted' }, ONLY_INVITED_LINE),
     canPasskey && !hint ? h('div', { class: 'stack' }, h('p', { class: 'body-text body-text--muted' }, 'Set up Face ID or your fingerprint already?'), passkeyBtn) : null);
   return () => prefetch?.stop();
 }
@@ -268,7 +297,7 @@ export function joinScreen(main, ctx) {
     const email = h('input', { class: 'input', id: 'email', type: 'email', name: 'email', autocomplete: 'email', inputmode: 'email', autocapitalize: 'off', spellcheck: 'false', required: true, value: invite.email ?? '' });
     const submit = h('button', { type: 'submit', class: 'btn btn--primary btn--block' }, 'Continue');
     const form = h('form', { novalidate: true },
-      h('div', { class: 'field' }, h('label', { for: 'name' }, 'Your name'), name, h('small', null, 'This is how Grandma will see you, like “Sarah” or “Uncle Mike”.')),
+      h('div', { class: 'field' }, h('label', { for: 'name' }, 'Your name'), name, h('small', null, 'Your first and last name, like “Sarah Lee”. Grandma sees your first name; Ben can change what she calls you.')),
       h('div', { class: 'field' }, h('label', { for: 'email' }, 'Your email'), email, h('small', null, 'We’ll send you a code to sign in. No password.')),
       error, submit);
     form.addEventListener('submit', async (e) => {
@@ -282,7 +311,8 @@ export function joinScreen(main, ctx) {
         const res = await api.post(`/api/invites/${encodeURIComponent(token)}/accept`, values);
         // When the invite was emailed to this address, the server signs them in straight away.
         if (res?.user) return afterSignIn(main, ctx, res);
-        codeStep(main, ctx, values.email);
+        // A typo is fixed by accepting the invite again with the right address.
+        codeStep(main, ctx, values.email, { onDifferentEmail: () => ctx.rerender() });
       } catch (err) {
         done();
         showError(error, err.message);
@@ -317,9 +347,14 @@ export function confirmScreen(main, ctx) {
       showError(error, err.status === 0 ? err.message : 'This link has expired or was already used. You can ask for a new code.');
     }
   });
+  // Mail opens links in Safari, never in the app on the Home Screen.
+  const inSafariOnIphone = currentPlatform().os === 'ios' && !isStandalone();
   mount(main,
     inAppNotice(),
-    pageHead({ eyebrow: 'Grandma’s family', title: 'One more tap', sub: 'Tap the button to sign in on this phone.' }),
+    pageHead({ eyebrow: 'Grandma’s family', title: 'One more tap', sub: 'Tap the button to sign in here.' }),
+    inSafariOnIphone
+      ? h('p', { class: 'body-text' }, 'If you’re signing in to the app on your Home Screen, go back to it and type the code from the email instead.')
+      : null,
     error,
     h('div', { class: 'stack' }, button, h('a', { class: 'btn btn--quiet', href: '/signin' }, 'Use a code instead')));
 }

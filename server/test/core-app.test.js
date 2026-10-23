@@ -307,6 +307,15 @@ describe('pages', () => {
     assert.equal((await get('/assets/../../etc/passwd')).statusCode, 404);
   });
 
+  test('the frame’s service worker may control /grandma, the pairing link; nothing else widens a scope', async () => {
+    const worker = await get('/grandma/sw.js', device);
+    assert.equal(worker.statusCode, 200);
+    assert.equal(worker.headers['service-worker-allowed'], '/grandma');
+    assert.equal(worker.headers['cache-control'], 'no-cache');
+    assert.equal((await get('/app/main.js')).headers['service-worker-allowed'], undefined);
+    assert.equal((await get('/grandma/index.html', device)).headers['service-worker-allowed'], undefined);
+  });
+
   test('robots.txt disallows everything', async () => {
     const res = await get('/robots.txt');
     assert.equal(res.statusCode, 200);

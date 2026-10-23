@@ -8,11 +8,13 @@
 //
 // Each item carries its renditions (versioned /media URLs), its sender and
 // Grandma's reactions and messages about it. serializeItems() and removeItem()
-// are exported for the frame and admin routes.
+// are exported for reuse; canView/canEdit live in lib/item-access.js.
 
 import { publish } from '../lib/events.js';
 import { httpError, requireUser } from '../lib/guards.js';
 import { isId } from '../lib/ids.js';
+import { canEdit, canView } from '../lib/item-access.js';
+import { shortNameOf } from '../lib/people.js';
 import { cancelQueued } from '../jobs/queue.js';
 
 export const PAGE_DEFAULT = 30;
@@ -66,16 +68,6 @@ function grandmaEventsByItem(db, ids) {
   return map;
 }
 
-export function canEdit(item, user) {
-  return Boolean(user) && (item.user_id === user.id || user.role === 'admin');
-}
-
-// Can this viewer ({ user } or { device }) see the item at all?
-export function canView(item, { user = null, device = null } = {}) {
-  if (item.status === 'ready') return Boolean(user || device);
-  return canEdit(item, user);
-}
-
 // Rows from `items` (joined with users as user_name / user_color) → API JSON.
 export function serializeItems(db, rows, { user = null } = {}) {
   const ids = rows.map((r) => r.id);
@@ -93,7 +85,12 @@ export function serializeItems(db, rows, { user = null } = {}) {
       width: row.width,
       height: row.height,
       duration_ms: row.duration_ms,
-      user: { id: row.user_id, name: row.user_name ?? null, color: row.user_color ?? null },
+      user: {
+        id: row.user_id,
+        name: row.user_name ?? null,
+        short_name: shortNameOf({ name: row.user_name, short_name: row.user_short_name }),
+        color: row.user_color ?? null,
+      },
       renditions: {},
       grandma_events: grandma.get(row.id) ?? [],
       can_edit: canEdit(row, user),
@@ -108,7 +105,7 @@ export function serializeItems(db, rows, { user = null } = {}) {
   });
 }
 
-const ITEM_SELECT = `SELECT items.*, users.name AS user_name, users.color AS user_color
+const ITEM_SELECT = `SELECT items.*, users.name AS user_name, users.short_name AS user_short_name, users.color AS user_color
                        FROM items JOIN users ON users.id = items.user_id`;
 
 export function loadItemRow(db, id) {

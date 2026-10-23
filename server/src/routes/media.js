@@ -11,7 +11,7 @@ import fs from 'node:fs/promises';
 import fastifyStatic from '@fastify/static';
 import { httpError, requireUserOrDevice } from '../lib/guards.js';
 import { isId } from '../lib/ids.js';
-import { canView } from './items.js';
+import { canView } from '../lib/item-access.js';
 
 export const ITEM_RENDITIONS = new Set(['thumb', 'display', 'large', 'poster', 'video']);
 const CACHE = 'private, max-age=31536000, immutable';

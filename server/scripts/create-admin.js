@@ -3,9 +3,9 @@
 // person with that email is promoted (or restored) instead of duplicated.
 //
 //   npm run admin:create -- --name "Ben Lee" --email ben@example.com
-//   docker compose -f deploy/docker-compose.yml run --rm app npm run admin:create -- --name … --email …
+//   docker compose exec app npm run admin:create -- --name … --email …   (on the server, in /home/ben/gma)
 
-import { cleanEmail, cleanName, ensureAdmin, logAdmin } from '../src/routes/admin.js';
+import { cleanEmail, cleanName, ensureAdmin, logAdmin } from '../src/lib/admin.js';
 import { EXIT, UsageError, openFromEnv, parseFlags, runIfMain } from './lib/cli.js';
 
 export const USAGE = 'Usage: npm run admin:create -- --name "Ben Lee" --email ben@example.com';

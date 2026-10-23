@@ -8,14 +8,16 @@
 // Invites are single use. Accepting one creates (or updates) a pending person;
 // the invite stays usable until that person has finished signing in, so a
 // mistyped email can be fixed by opening the link again. Typing the address of
-// someone who already has an account just sends them a sign-in code and leaves
-// the invite alone.
+// anyone else (someone who already has an account, or a relative still pending
+// through their own invite) just sends them a sign-in code and leaves both them
+// and the invite alone.
 
 import { httpError } from '../lib/guards.js';
 import { newId } from '../lib/ids.js';
 import { now } from '../lib/time.js';
 import { sha256 } from '../lib/tokens.js';
-import { clientIp, readEmail, readName, sendSignInCode, signIn } from './auth.js';
+import { readEmail, readName, sendSignInCode, signIn } from '../lib/login.js';
+import { clientIp, perIp } from '../lib/rate-limits.js';
 
 const PROBLEMS = {
   unknown: [404, "We couldn't find that invite. Please check the link, or ask Ben for a new one."],
@@ -50,8 +52,12 @@ function provesEmail(invite, email) {
 }
 
 // Finds or makes the person this acceptance is for and marks the invite used
-// by them. Someone who already has an account only uses it up when the link
-// proves their address (so a stranger can't burn it by typing their email).
+// by them. An invite only ever edits the pending person it created itself
+// (`created_user_id`): anyone else whose address is typed (someone who already
+// has an account, or a relative still pending through their own invite) is
+// never renamed, never given another email and never claims this invite. They
+// just get a sign-in code at their own address, unless the link proves that
+// address (the app mailed this invite to it), which signs them in.
 function claimInvite(db, invite, { name, email, proven }) {
   return db.transaction(() => {
     const at = now();
@@ -61,38 +67,38 @@ function claimInvite(db, invite, { name, email, proven }) {
     if (existing?.status === 'removed') {
       throw httpError(403, 'account_removed', ACCOUNT_REMOVED);
     }
-    if (existing?.status === 'active') {
+    // The person this invite made last time, while they are still pending.
+    const own = invite.created_user_id
+      ? db.prepare("SELECT * FROM users WHERE id = ? AND status = 'pending'").get(invite.created_user_id)
+      : null;
+    if (existing && existing.id !== own?.id) {
       if (proven) markUsed(existing.id);
       return existing;
     }
 
-    let user = existing;
-    if (user) {
-      db.prepare('UPDATE users SET name = ? WHERE id = ?').run(name, user.id);
-    } else {
+    let userId;
+    if (existing) {
+      // The same pending person typed their address again: their name may change.
+      db.prepare('UPDATE users SET name = ? WHERE id = ?').run(name, existing.id);
+      userId = existing.id;
+    } else if (own) {
       // Opening the link again after a typo: fix the person it made last time.
-      const earlier = invite.used_by
-        ? db.prepare("SELECT * FROM users WHERE id = ? AND status = 'pending'").get(invite.used_by)
-        : null;
-      if (earlier) {
-        db.prepare('UPDATE users SET name = ?, email = ? WHERE id = ?').run(name, email, earlier.id);
-        user = earlier;
-      } else {
-        user = { id: newId() };
-        db.prepare(
-          `INSERT INTO users (id, name, email, role, status, color, created_at, activated_at, removed_at)
-           VALUES (?, ?, ?, ?, 'pending', NULL, ?, NULL, NULL)`,
-        ).run(user.id, name, email, invite.role, at);
-      }
+      db.prepare('UPDATE users SET name = ?, email = ? WHERE id = ?').run(name, email, own.id);
+      userId = own.id;
+    } else {
+      userId = newId();
+      db.prepare(
+        `INSERT INTO users (id, name, email, role, status, color, created_at, activated_at, removed_at)
+         VALUES (?, ?, ?, ?, 'pending', NULL, ?, NULL, NULL)`,
+      ).run(userId, name, email, invite.role, at);
+      db.prepare('UPDATE invites SET created_user_id = ? WHERE id = ?').run(userId, invite.id);
     }
-    markUsed(user.id);
-    return db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
+    markUsed(userId);
+    return db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
   })();
 }
 
 export default async function inviteRoutes(app, { db }) {
-  const perIp = (max, timeWindow) => ({ rateLimit: { max, timeWindow, keyGenerator: clientIp } });
-
   app.get('/api/invites/:token', { config: perIp(60, '1 minute') }, async (request, reply) => {
     reply.header('cache-control', 'no-store');
     const invite = findInvite(db, request.params.token);

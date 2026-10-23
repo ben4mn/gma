@@ -253,7 +253,7 @@ describe('GET /api/frame/state', () => {
       [later.id, video.id, m3.id, m2.id, m1.id, old.id],
     );
     const first = state.slideshow.find((i) => i.id === m3.id);
-    assert.deepEqual(first.sender, { id: mike.id, name: 'Mike' });
+    assert.deepEqual(first.sender, { id: mike.id, name: 'Mike', short_name: 'Mike', full_name: 'Mike' });
     assert.equal(first.caption, 'Lily at the farm');
     assert.equal(first.renditions.display.url, `/media/${m3.id}/display?v=${m3.ready_at}`);
     assert.equal(first.renditions.display.width, 1600);
@@ -396,7 +396,7 @@ describe('POST /api/frame/react and /api/frame/preset', () => {
     assert.equal(event.kind, 'reaction');
     assert.equal(event.reaction, 'love');
     assert.equal(event.item.id, item.id);
-    assert.deepEqual(event.recipient, { id: owner.id, name: 'Sarah' });
+    assert.deepEqual(event.recipient, { id: owner.id, name: 'Sarah', short_name: 'Sarah' });
 
     const row = t.db.prepare('SELECT * FROM grandma_events WHERE id = ?').get(event.id);
     assert.equal(row.device_id, device.id);
@@ -498,7 +498,7 @@ describe('POST /api/frame/react and /api/frame/preset', () => {
       title: 'Grandma sent you a message',
       body: '“Call me” · about your video',
       navigate: `http://localhost:8080/from-grandma#e-${event.id}`,
-      tag: `grandma-${video.id}`,
+      tag: `grandma-message-${event.id}`,
     });
 
     const again = await post('/api/frame/preset', { item_id: video.id, preset_id: PRESET_CALL_ME, client_id: 'preset-0001' });
@@ -508,11 +508,39 @@ describe('POST /api/frame/react and /api/frame/preset', () => {
     assert.equal(push.calls.length, 1);
   });
 
-  test('an unknown preset is refused', async () => {
+  test('an unknown preset with no stored words is a final 410', async () => {
     const item = makeItem(t.db, owner);
     const res = await post('/api/frame/preset', { item_id: item.id, preset_id: newId(), client_id: 'preset-0002' });
-    assert.equal(res.statusCode, 404);
+    assert.equal(res.statusCode, 410);
     assert.equal(res.json().error.code, 'preset_gone');
+    assert.match(res.json().error.message, /wasn't sent/);
+    assert.equal(t.db.prepare("SELECT COUNT(*) AS n FROM grandma_events WHERE client_id = 'preset-0002'").get().n, 0);
+  });
+
+  test('a queued tap on a deleted preset still sends the words the frame showed', async () => {
+    const item = makeItem(t.db, owner);
+    const res = await post('/api/frame/preset', {
+      item_id: item.id,
+      preset_id: newId(),
+      preset_text: '  Love   you  ',
+      client_id: 'preset-0003',
+    });
+    assert.equal(res.statusCode, 201, res.body);
+    const { event } = res.json();
+    assert.equal(event.kind, 'preset');
+    assert.equal(event.preset_id, null);
+    assert.equal(event.preset_text, 'Love you');
+    assert.equal(event.recipient.id, owner.id);
+    await settle();
+    assert.equal(push.calls.length, 1);
+
+    const tooLong = await post('/api/frame/preset', {
+      item_id: item.id,
+      preset_id: newId(),
+      preset_text: 'x'.repeat(41),
+      client_id: 'preset-0004',
+    });
+    assert.equal(tooLong.statusCode, 410);
   });
 
   test('a state-changing request from another origin is refused', async () => {

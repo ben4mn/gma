@@ -20,3 +20,14 @@ export function shouldRest({ night, resting, screen, lastTouch, now, busy }) {
 export function canReload({ screen, lastTouch, now, busy }) {
   return screen === 'home' && !busy && now - lastTouch >= IDLE_MS;
 }
+
+/** New uploads wait to redraw Home until it has been untouched this long. */
+export const HOME_SETTLE_MS = 15_000;
+
+/**
+ * May Home be rebuilt with new cards now? Not while she is reaching for a
+ * card: a card that moves under her finger opens the wrong photo.
+ */
+export function canRedrawHome({ screen, lastTouch, now, busy }) {
+  return screen === 'home' && !busy && now - lastTouch >= HOME_SETTLE_MS;
+}

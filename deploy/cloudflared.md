@@ -1,100 +1,104 @@
-# Cloudflare Tunnel: adding gma.4mn.org
+# Cloudflare Tunnel: gma.4mn.org
 
-The homelab already runs a tunnel for Ben's other sites. gma.4mn.org is one more
-public hostname on that same tunnel, pointing at nginx on the homelab. Nothing
-else about the tunnel changes.
+gma has its own named tunnel, like Ben's other apps on the box. The tunnel runs
+in the `gma-tunnel` container inside gma's compose project and goes straight to
+the app over the compose network. nginx-proxy-manager (80/443), the host's
+`/etc/cloudflared` and every other app's tunnel are not involved.
 
 ```
-browser ─ https ─ Cloudflare ─ tunnel ─ cloudflared (homelab) ─ http://localhost:80 (nginx) ─ 127.0.0.1:8090 (app)
+phone ─ https ─ Cloudflare ─ tunnel c0773eb4… ─ gma-tunnel (10.35.0.3) ─ http://app:8080 (gma-app, 10.35.0.2)
 ```
 
-Before you start: the app is up (`curl -s http://127.0.0.1:8090/healthz` says
-`"ok":true`) and the nginx site is enabled (`curl -s -H 'Host: gma.4mn.org' http://127.0.0.1/healthz`).
+| | |
+|---|---|
+| Tunnel | `gma`, id `c0773eb4-ed3d-42bf-aa5e-d6fe842ab67b` (already created) |
+| Credentials | `/home/ben/.cloudflared/c0773eb4-ed3d-42bf-aa5e-d6fe842ab67b.json` (uid 1000, mode 0400); `.env` → `GMA_TUNNEL_CREDENTIALS` |
+| Config | [`deploy/cloudflared.yml`](cloudflared.yml), mounted read-only at `/etc/cloudflared/config.yml` |
+| Ingress | `gma.4mn.org` → `http://app:8080`; anything else → 404 |
 
-## 1. Find out how the tunnel is managed
+The app believes `CF-Connecting-IP` (for rate limits) only from the tunnel's
+address: compose sets `TRUST_PROXY=10.35.0.3`. If you ever change the tunnel's
+`ipv4_address` in `docker-compose.yml`, change `TRUST_PROXY` with it.
+
+## 1. Route the DNS name to the tunnel (once)
+
+This makes **one new** proxied CNAME, `gma.4mn.org` → `c0773eb4-….cfargotunnel.com`.
+Run it on the box as ben (it uses `~/.cloudflared/cert.pem`, which must belong
+to the Cloudflare account that holds the 4mn.org zone):
 
 ```sh
-systemctl cat cloudflared | grep ExecStart
+cloudflared tunnel route dns gma gma.4mn.org
 ```
 
-- `--config /etc/cloudflared/config.yml` (or `~/.cloudflared/config.yml`): a
-  **locally managed** tunnel. Follow step 2a.
-- `tunnel run --token …`: a **dashboard-managed** tunnel. Follow step 2b.
+- If a `gma.4mn.org` record already exists, the command fails instead of
+  overwriting it. Look at it in the dashboard before doing anything else; don't
+  add `--overwrite-dns` unless you know that record is a leftover of gma's.
+- Never edit other hostnames' routes or `/etc/cloudflared` for this: gma needs
+  nothing outside its own compose project.
 
-## 2a. Locally managed: add one ingress rule
-
-Edit the config file and add the gma rule **above** the final catch-all rule.
-Leave every other rule exactly as it is; rules match top to bottom.
-
-```yaml
-ingress:
-  # … existing rules stay as they are …
-  - hostname: gma.4mn.org
-    service: http://localhost:80
-  # the catch-all must stay last
-  - service: http_status:404
-```
-
-Check the file and which rule a URL will hit:
+Check the record:
 
 ```sh
-cloudflared tunnel ingress validate
-cloudflared tunnel ingress rule https://gma.4mn.org/healthz   # should print the gma rule
+dig +short gma.4mn.org     # Cloudflare's addresses (the record is proxied), never the box's own IP
 ```
 
-Create the DNS record (a proxied CNAME to `<tunnel-id>.cfargotunnel.com`):
+## 2. Start it
+
+The tunnel container starts with the rest (`docker compose up -d --build`, see
+the README) and waits for the app to be healthy first.
 
 ```sh
-cloudflared tunnel list                                  # the tunnel's name or id
-cloudflared tunnel route dns <tunnel-name-or-id> gma.4mn.org
+docker compose ps tunnel                 # Up
+docker compose logs --tail 30 tunnel     # "Registered tunnel connection" ×4, no errors
+cloudflared tunnel info gma              # on the host: 4 connections from this box
 ```
-
-`route dns` needs the 4mn.org zone in the Cloudflare account that
-`~/.cloudflared/cert.pem` belongs to. If the record already exists, it fails
-rather than overwriting it; check it in the dashboard.
-
-Then restart the tunnel. Existing sites blip for a second or two:
-
-```sh
-sudo systemctl restart cloudflared
-journalctl -u cloudflared -n 50 --no-pager   # "Registered tunnel connection" ×4, no errors
-```
-
-## 2b. Dashboard-managed
-
-Zero Trust → Networks → Tunnels → the homelab tunnel → Public Hostname →
-Add a public hostname: subdomain `gma`, domain `4mn.org`, type `HTTP`, URL
-`localhost:80`. Saving creates the DNS record. No restart is needed.
 
 ## 3. Zone settings for this hostname
 
 The app sends a strict Content-Security-Policy, so anything Cloudflare injects
-into pages would be blocked (or break the page). For gma.4mn.org, make sure these
-are off (Rules → Configuration Rules, matching `http.host eq "gma.4mn.org"`):
+into pages would be blocked or break the page. For gma.4mn.org (Rules →
+Configuration Rules, matching `http.host eq "gma.4mn.org"`):
 
-- Rocket Loader and Email Address Obfuscation: off (both inject scripts into pages).
+- Rocket Loader and Email Address Obfuscation: off (both inject scripts).
 - No Cache Rule that caches `/media/*` or `/api/*`. The app marks media
   `private`, so Cloudflare won't cache it by default; keep it that way.
-- Don't put Cloudflare Access in front of it: Grandma's frame and the installed
-  phone apps can't do the Access login.
+- No Cloudflare Access in front of it: Grandma's frame and the installed phone
+  apps can't do the Access login.
 
-Limits worth knowing: a request body is capped at 100 MB (tus uses 32 MB
+Limits worth knowing: a request body is capped at 100 MB (tus uploads use 32 MB
 chunks), and an idle connection is closed after 100 s (the live-updates stream
 sends a comment every 25 s).
 
 ## 4. Verify
 
 ```sh
+curl -s  http://127.0.0.1:3064/healthz        # on the box: {"ok":true,"db":true,"worker_last_seen":…}
 curl -sI https://gma.4mn.org/healthz          # HTTP/2 200, x-robots-tag: noindex, nofollow
-curl -s  https://gma.4mn.org/healthz          # {"ok":true,"db":true,"worker_last_seen":…}
 curl -sI https://gma.4mn.org/                 # 302 to /signin?next=%2F
 curl -sI https://gma.4mn.org/ | grep -i strict-transport-security
 ```
 
-Then on a phone: open `https://gma.4mn.org/signin`, request a code, and sign in.
-Check Ben's other sites still load.
+Then on a phone: open `https://gma.4mn.org/signin`, request a code (with
+`EMAIL_TRANSPORT=console` it appears in `docker compose logs app`), and sign in.
+Check Ben's other sites still load; nothing of theirs was touched.
 
-## Undo
+If the tunnel flaps (repeated "Unregistered tunnel connection" in the logs),
+add `protocol: http2` at the top level of `deploy/cloudflared.yml` and
+`docker compose up -d tunnel`.
 
-Remove the rule (2a) or the public hostname (2b), restart cloudflared (2a only),
-and delete the `gma` DNS record. Nothing else was touched.
+## Removing it
+
+```sh
+docker compose stop tunnel && docker compose rm -f tunnel   # gma is off the internet; the app keeps running
+```
+
+Then delete the `gma.4mn.org` CNAME in the Cloudflare dashboard (DNS → Records).
+To drop the tunnel itself as well (only if gma is going away for good):
+
+```sh
+cloudflared tunnel cleanup gma
+cloudflared tunnel delete gma
+rm /home/ben/.cloudflared/c0773eb4-ed3d-42bf-aa5e-d6fe842ab67b.json
+```
+
+Nothing else on the box or in other tunnels changes.

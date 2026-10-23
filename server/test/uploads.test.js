@@ -102,6 +102,19 @@ test('the owner comes from the session, not from the metadata', async (t) => {
   assert.equal(ctx.db.prepare('SELECT user_id FROM items WHERE id = ?').get(res.headers['x-item-id']).user_id, user.id);
 });
 
+test('behind the tunnel the Location stays relative, whatever the forwarded headers say', async (t) => {
+  const ctx = await makeTestApp({ env: { TRUST_PROXY: '127.0.0.1' } });
+  t.after(ctx.cleanup);
+  const cookie = loginAs(ctx.app, ctx.db, makeUser(ctx.db));
+  const created = await create(ctx.app, cookie, {
+    length: 10,
+    metadata: { filetype: 'image/jpeg' },
+    headers: { 'x-forwarded-host': 'evil.example', 'x-forwarded-proto': 'http', forwarded: 'host=evil.example;proto=http' },
+  });
+  assert.equal(created.statusCode, 201, created.body);
+  assert.match(created.headers.location, /^\/api\/uploads\/[A-Za-z0-9_-]+$/);
+});
+
 test('uploads larger than the JSON body limit go through', async (t) => {
   const ctx = await makeTestApp();
   t.after(ctx.cleanup);
@@ -212,4 +225,35 @@ test('sweepScratch removes week-old chunks only', async (t) => {
   await fs.utimes(path.join(dir, 'old'), weekAgo, weekAgo);
   assert.equal(await sweepScratch(dir), 1);
   assert.deepEqual(await fs.readdir(dir), ['new']);
+});
+
+test('a signed-out body is refused before it is read, and only tus bodies are taken (SEC-2)', async (t) => {
+  const ctx = await makeTestApp();
+  t.after(ctx.cleanup);
+  const junk = Buffer.alloc(5 * 1024 * 1024, 0x7b); // 5 MB of "{" (invalid JSON)
+
+  const signedOut = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/uploads',
+    headers: { ...sameOrigin(''), ...TUS, 'content-type': 'application/json' },
+    payload: junk,
+  });
+  assert.equal(signedOut.statusCode, 401, 'auth comes first: the body was never parsed');
+  assert.equal(signedOut.json().error.code, 'unauthorized');
+
+  const cookie = loginAs(ctx.app, ctx.db, makeUser(ctx.db));
+  for (const type of ['application/json', 'text/plain', 'multipart/form-data; boundary=x']) {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/uploads',
+      headers: { ...sameOrigin(cookie), ...TUS, 'content-type': type, 'upload-length': '10' },
+      payload: junk.subarray(0, 64 * 1024),
+    });
+    assert.equal(res.statusCode, 415, `${type} is refused`);
+    assert.equal(res.json().error.code, 'unsupported_media_type');
+  }
+
+  // A bodiless creation request with a stray Content-Type still works.
+  const created = await create(ctx.app, cookie, { length: 10, headers: { 'content-type': 'application/json' } });
+  assert.equal(created.statusCode, 201, created.body);
 });

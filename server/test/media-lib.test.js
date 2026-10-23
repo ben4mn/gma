@@ -45,11 +45,14 @@ test('the ffmpeg argument lists match the contract', () => {
   const joined = video.join(' ');
   assert.ok(
     joined.includes(
-      "-map 0:v:0 -map 0:a:0? -map_metadata -1 -map_chapters -1 -vf scale=-2:'min(720,ih)',format=yuv420p -c:v libx264 -profile:v high -preset veryfast -crf 23 -maxrate 3M -bufsize 6M -c:a aac -b:a 128k -ac 2 -movflags +faststart -f mp4 out.tmp",
+      "-map 0:v:0 -map 0:a:0? -map_metadata -1 -map_chapters -1 -vf scale=w='if(gte(iw,ih),-2,min(720,trunc(iw/2)*2))':h='if(gte(iw,ih),min(720,trunc(ih/2)*2),-2)',format=yuv420p -c:v libx264 -threads 2 -profile:v high -preset veryfast -crf 23 -maxrate 3M -bufsize 6M -c:a aac -b:a 128k -ac 2 -movflags +faststart -f mp4 out.tmp",
     ),
     joined,
   );
   assert.equal(video[video.indexOf('-i') + 1], 'in.mov');
+  // One video must not take every core: decoder, filters and encoder are capped.
+  assert.ok(joined.startsWith('-hide_banner -nostdin -loglevel error -y -filter_threads 2 -threads 2 -i in.mov'), joined);
+  assert.ok(buildPosterArgs({ input: 'a', output: 'b', durationMs: 5000 }).join(' ').includes('-filter_threads 2 -threads 2'));
   assert.match(buildVideoArgs({ input: 'a', output: 'b', hdr: true }).join(' '), /-vf zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,scale/);
 
   assert.ok(buildVoiceArgs({ input: 'a.webm', output: 'b' }).join(' ').includes('-vn -t 65 -map_metadata -1 -ac 1 -c:a aac -b:a 64k -movflags +faststart -f mp4 b'));
@@ -139,6 +142,27 @@ test('ffmpeg + ffprobe: a generated clip goes through the real video pipeline', 
   await tools.transcodeVoice({ input: clip, output: voice });
   const v = await tools.probe(voice);
   assert.deepEqual([v.hasVideo, v.hasAudio], [false, true]);
+});
+
+test('ffmpeg: renditions are 720 on the short side, never upscaled', { skip: !(BIN.ffmpeg && BIN.ffprobe) && 'ffmpeg/ffprobe not installed here; runs in the Docker image' }, async (t) => {
+  const dir = await makeTempDir();
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const tools = createMediaTools();
+  // [source size, the rendition it must become]
+  const cases = [
+    ['1080x1920', [720, 1280]], // a portrait phone video
+    ['1920x1080', [1280, 720]],
+    ['480x854', [480, 854]], // already small: left alone
+    ['1000x1000', [720, 720]],
+  ];
+  for (const [size, expected] of cases) {
+    const clip = path.join(dir, `clip-${size}.mp4`);
+    await exec(BIN.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', `testsrc=size=${size}:rate=10`, '-t', '1', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', clip]);
+    const out = path.join(dir, `out-${size}.tmp`);
+    await tools.transcodeVideo({ input: clip, output: out, hdr: false });
+    const result = await tools.probe(out);
+    assert.deepEqual([result.width, result.height], expected, size);
+  }
 });
 
 test('heif-dec: decodes a HEIC to PNG', { skip: !BIN.heifDec && 'heif-dec not installed here; runs in the Docker image' }, async (t) => {

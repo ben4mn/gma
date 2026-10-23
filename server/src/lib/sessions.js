@@ -117,3 +117,21 @@ export function revokeUserSessions(db, userId) {
 export function revokeDeviceSessions(db, deviceId) {
   return db.prepare("DELETE FROM sessions WHERE kind = 'device' AND device_id = ?").run(deviceId).changes;
 }
+
+// Is this session still good? (Long-lived SSE streams re-check it: a removed
+// person, a revoked frame or a signed-out session ends the stream.) Read-only.
+export function isSessionLive(db, sessionId, { now = Date.now() } = {}) {
+  if (!sessionId) return false;
+  const row = db
+    .prepare(
+      `SELECT s.kind, s.expires_at, u.status AS user_status, d.id AS device_row, d.revoked_at AS device_revoked_at
+         FROM sessions s
+         LEFT JOIN users u ON u.id = s.user_id
+         LEFT JOIN devices d ON d.id = s.device_id
+        WHERE s.id = ?`,
+    )
+    .get(sessionId);
+  if (!row || row.expires_at <= now) return false;
+  if (row.kind === 'user') return Boolean(row.user_status) && row.user_status !== 'removed';
+  return Boolean(row.device_row) && !row.device_revoked_at;
+}

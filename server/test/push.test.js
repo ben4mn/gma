@@ -169,8 +169,9 @@ describe('notifyGrandmaEvent: who gets what', () => {
       title: 'Grandma sent you a message',
       body: '“Call me” · about your photo',
       navigate: `http://localhost:8080/from-grandma#e-${eventId}`,
-      tag: `grandma-${item.id}`,
+      tag: `grandma-message-${eventId}`,
     });
+    assert.notEqual(push.calls[0].payload.notification.tag, `grandma-${item.id}`, 'a later reaction never replaces it (F13)');
   });
 
   test('a voice note goes to every active person, nobody pending or removed', async () => {

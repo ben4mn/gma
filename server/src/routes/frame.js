@@ -7,10 +7,15 @@
 //   POST /api/frame/preset        { item_id, preset_id, client_id }  idempotent
 //   POST /api/frame/voice         multipart: client_id, audio (≤ 5 MB)  idempotent
 //   POST /api/frame/heartbeat     { version, online_since }
+//   GET  /api/frame/display       night or day for the Pi's screen helper
+//                                 (the frame's cookie, or Authorization: Bearer <pairing token>)
 //
 // The frame's outbox retries anything that didn't get an answer, so every send
 // is keyed by its client_id: a repeat returns the original and never pushes twice.
 // A 4xx answer is final (the outbox drops it); only network errors and 5xx retry.
+//
+// The frame shows people by their short name (what Grandma calls them): every
+// sender here has `name` = the short name, plus `short_name` and `full_name`.
 //
 // Route options: `pushSender` replaces web-push's sendNotification (tests).
 
@@ -24,7 +29,10 @@ import { createSession, setSessionCookie } from '../lib/sessions.js';
 import { getSetting, getSettings } from '../lib/settings.js';
 import { DAY, MINUTE, isNight, now } from '../lib/time.js';
 import { sha256 } from '../lib/tokens.js';
-import { itemJson, loadFeedEvent, loadRenditions, renditionUrl } from './grandma-events.js';
+import { loadFeedEvent } from '../lib/grandma-feed.js';
+import { shortNameOf } from '../lib/people.js';
+import { perIp } from '../lib/rate-limits.js';
+import { itemJson, loadRenditions, renditionUrl } from '../lib/renditions.js';
 
 const SLIDESHOW_LIMIT = 300; // the frame's service worker caches about this many
 const NEW_LIMIT = 100;
@@ -33,6 +41,10 @@ const GROUP_WINDOW_MS = 10 * MINUTE;
 const SEEN_MAX_IDS = 500;
 const VOICE_MAX_BYTES = 5 * 1024 * 1024;
 const CLIENT_ID = /^[A-Za-z0-9_-]{8,100}$/;
+const MAX_PRESET_TEXT = 40; // the admin's limit for a preset
+// The Pi's screen helper sets the backlight from GET /api/frame/display.
+export const BRIGHTNESS_DAY = 100;
+export const BRIGHTNESS_NIGHT = 25;
 
 // MediaRecorder's types (codec parameters stripped) → the original's extension.
 const VOICE_TYPES = new Map([
@@ -149,6 +161,13 @@ function requireItemId(value) {
   return value;
 }
 
+// The words a queued preset tap carried (the frame keeps them with the tap), or null.
+function storedPresetText(value) {
+  if (typeof value !== 'string') return null;
+  const text = value.trim().replace(/\s+/g, ' ');
+  return text && text.length <= MAX_PRESET_TEXT ? text : null;
+}
+
 function isUniqueViolation(err) {
   return err?.code === 'SQLITE_CONSTRAINT_UNIQUE' || err?.code === 'SQLITE_CONSTRAINT_PRIMARYKEY';
 }
@@ -161,18 +180,19 @@ export default async function frameRoutes(app, { config, db, pushSender = undefi
 
   const statements = {
     deviceByToken: db.prepare('SELECT * FROM devices WHERE token_hash = ? AND revoked_at IS NULL'),
+    anyDeviceByToken: db.prepare('SELECT id, revoked_at FROM devices WHERE token_hash = ?'),
     touchDevice: db.prepare('UPDATE devices SET last_seen_at = ? WHERE id = ?'),
     presets: db.prepare('SELECT id, text, sort FROM presets WHERE active = 1 ORDER BY sort, id'),
     preset: db.prepare('SELECT id, text FROM presets WHERE id = ?'),
     slideshow: db.prepare(
-      `SELECT i.*, u.name AS user_name FROM items i JOIN users u ON u.id = i.user_id
+      `SELECT i.*, u.name AS user_name, u.short_name AS user_short_name FROM items i JOIN users u ON u.id = i.user_id
        WHERE i.status = 'ready'
          AND EXISTS (SELECT 1 FROM renditions r WHERE r.item_id = i.id
                      AND r.name = CASE i.kind WHEN 'photo' THEN 'display' ELSE 'poster' END)
        ORDER BY i.id DESC LIMIT ?`,
     ),
     unseen: db.prepare(
-      `SELECT i.*, u.name AS user_name FROM items i JOIN users u ON u.id = i.user_id
+      `SELECT i.*, u.name AS user_name, u.short_name AS user_short_name FROM items i JOIN users u ON u.id = i.user_id
        WHERE i.status = 'ready' AND i.created_at >= ?
          AND NOT EXISTS (SELECT 1 FROM item_views v WHERE v.device_id = ? AND v.item_id = i.id)
        ORDER BY i.id DESC LIMIT ?`,
@@ -202,8 +222,10 @@ export default async function frameRoutes(app, { config, db, pushSender = undefi
 
   const familyPhotoSql = (extraWhere) =>
     db.prepare(
-      `SELECT i.id, i.ready_at, r.width, r.height FROM items i
+      `SELECT i.id, i.ready_at, r.width, r.height, i.user_id, u.name AS user_name, u.short_name AS user_short_name
+       FROM items i
        JOIN renditions r ON r.item_id = i.id AND r.name = 'display'
+       JOIN users u ON u.id = i.user_id
        WHERE i.status = 'ready' AND i.kind = 'photo' ${extraWhere}
        ORDER BY i.id DESC LIMIT 1`,
     );
@@ -221,7 +243,14 @@ export default async function frameRoutes(app, { config, db, pushSender = undefi
     const row =
       (isId(chosen) && familyPhotoBy.chosen.get(chosen)) || familyPhotoBy.landscape.get() || familyPhotoBy.newest.get();
     if (!row) return null;
-    return { item_id: row.id, url: renditionUrl(row.id, 'display', row.ready_at), width: row.width, height: row.height };
+    const shortName = shortNameOf({ name: row.user_name, short_name: row.user_short_name }) ?? 'Someone in the family';
+    return {
+      item_id: row.id,
+      url: renditionUrl(row.id, 'display', row.ready_at),
+      width: row.width,
+      height: row.height,
+      sender: { id: row.user_id, name: shortName, short_name: shortName, full_name: row.user_name },
+    };
   }
 
   function itemsJson(rows) {
@@ -283,7 +312,7 @@ export default async function frameRoutes(app, { config, db, pushSender = undefi
   // -------------------------------------------------------------------------
   // Pairing
 
-  app.get('/grandma', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
+  app.get('/grandma', { config: perIp(30, '1 minute') }, async (request, reply) => {
     reply.header('cache-control', 'no-store');
     const token = request.query.device;
     if (token === undefined) return reply.redirect('/grandma/', 302);
@@ -389,14 +418,19 @@ export default async function frameRoutes(app, { config, db, pushSender = undefi
 
     const item = statements.readyItem.get(itemId);
     if (!item) throw httpError(404, 'item_gone', "That photo isn't on the frame anymore.");
-    // An inactive preset still sends: the frame may have shown it before Ben changed the list.
+    // An inactive preset still sends: the frame may have shown it before Ben changed
+    // the list. A deleted one still sends the words the frame showed, when the
+    // outbox kept them; otherwise 410, which the outbox treats as final.
     const preset = statements.preset.get(body.preset_id);
-    if (!preset) throw httpError(404, 'preset_gone', "That message isn't available anymore.");
+    const text = preset?.text ?? storedPresetText(body.preset_text);
+    if (!text) {
+      throw httpError(410, 'preset_gone', "That message isn't available anymore, so it wasn't sent.");
+    }
     return recordEvent(request, reply, {
       kind: 'preset',
       item_id: item.id,
-      preset_id: preset.id,
-      preset_text: preset.text,
+      preset_id: preset?.id ?? null,
+      preset_text: text,
       recipient_user_id: item.user_id,
       client_id: clientId,
     });
@@ -505,5 +539,49 @@ export default async function frameRoutes(app, { config, db, pushSender = undefi
       request.log.info({ device: deviceId, version: body.version }, 'Frame version');
     }
     return { ok: true, now: at };
+  });
+
+  // -------------------------------------------------------------------------
+  // Display: the Pi's screen helper (outside the browser) asks whether it is
+  // night, to dim the backlight. It has no cookie, so it may use the pairing
+  // token from the kiosk's URL instead. It never counts as the frame being seen.
+
+  function displayDevice(request, reply) {
+    const header = request.headers.authorization;
+    if (typeof header === 'string' && /^bearer\s/i.test(header)) {
+      const token = header.slice(7).trim();
+      const row = token.length >= 20 && token.length <= 200 ? statements.anyDeviceByToken.get(sha256(token)) : null;
+      if (!row || row.revoked_at) {
+        throw httpError(401, 'unauthorized', 'This frame needs to be paired again. Ask Ben to send a new link.');
+      }
+      return row;
+    }
+    authenticate(request, reply);
+    if (!request.device) {
+      throw httpError(401, 'unauthorized', 'This frame needs to be paired again. Ask Ben to send a new link.');
+    }
+    return request.device;
+  }
+
+  app.get('/api/frame/display', { config: perIp(60, '1 minute') }, async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    displayDevice(request, reply);
+    const at = now();
+    const settings = getSettings(db, ['night_start', 'night_end', 'timezone']);
+    let night = false;
+    try {
+      night = isNight(at, settings);
+    } catch (err) {
+      request.log.warn({ err }, 'Night hours are misconfigured; treating it as daytime');
+    }
+    return {
+      night,
+      night_start: settings.night_start,
+      night_end: settings.night_end,
+      timezone: settings.timezone,
+      brightness_day: BRIGHTNESS_DAY,
+      brightness_night: BRIGHTNESS_NIGHT,
+      now: at,
+    };
   });
 }

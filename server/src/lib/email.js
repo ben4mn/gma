@@ -37,9 +37,12 @@ export async function sendEmail(config, { to, subject, text, html }) {
   }
 
   if (config.emailTransport === 'console') {
-    // Dev only: the whole message, so you can copy the code. Never used in production.
+    // Development, and the first days of a deploy before Resend is set up: the
+    // whole message, so you can copy the code. Nothing was emailed, so callers
+    // must not treat it as delivered (`printed: true`): an invite printed here
+    // never proves the address.
     console.log(`\n--- email to ${to} ---\nSubject: ${subject}\n\n${text}\n--- end ---\n`);
-    return { id: 'console' };
+    return { id: 'console', printed: true };
   }
 
   let response;
@@ -98,7 +101,8 @@ export function signInCodeEmail({ name, code, confirmUrl, minutes = 15 }) {
     '',
     `Your sign-in code is ${code}. Type it into the app. It works for ${minutes} minutes.`,
     '',
-    'Or open this link on the phone you want to use, then tap the button:',
+    'Using the app on your Home Screen? Type the code there.',
+    'On a computer, or in your web browser, you can open this link and tap the button instead:',
     confirmUrl,
     '',
     "If you didn't ask for this, you can ignore this email.",
@@ -108,9 +112,9 @@ export function signInCodeEmail({ name, code, confirmUrl, minutes = 15 }) {
       escapeHtml(greeting(name)),
       `Your sign-in code is<br><strong style="font-size:32px;letter-spacing:6px">${escapeHtml(code)}</strong>`,
       `Type it into the app. It works for ${minutes} minutes.`,
-      'Or tap this button on the phone you want to use:',
+      'Using the app on your Home Screen? Type the code there. On a computer, or in your web browser, you can tap this button instead:',
     ],
-    button: { href: confirmUrl, label: 'Sign in on this phone' },
+    button: { href: confirmUrl, label: 'Sign in with this link' },
     footnote: "If you didn't ask for this, you can ignore this email.",
   });
   return { subject, text, html };

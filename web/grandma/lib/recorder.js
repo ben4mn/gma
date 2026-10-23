@@ -31,9 +31,15 @@ export function createRecorder({ maxMs = MAX_MS, onTick, onDone }) {
 
   async function start() {
     cancelled = false;
-    stream = await navigator.mediaDevices.getUserMedia({
+    const got = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
+    if (cancelled) {
+      // cancelled while the browser was still asking for the microphone: close it at once
+      got.getTracks().forEach((t) => t.stop());
+      return;
+    }
+    stream = got;
     const mimeType = pickMimeType((t) => MediaRecorder.isTypeSupported(t));
     rec = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
     chunks = [];

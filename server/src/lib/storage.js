@@ -5,7 +5,14 @@
 //   originals/<yyyy>/<mm>/<id>.<ext>    never served
 //   renditions/<id>/<name>.<ext>        served by /media (voice notes use their own id)
 //   uploads/                            tus scratch space
+//   backups/                            the worker's nightly database snapshots
+//
+// In production MEDIA_DIR is the Seagate drive. A sentinel file there
+// (MEDIA_SENTINEL, ".gma-media") proves the drive is mounted: init() refuses
+// to create anything without it, so an unplugged drive can't mean photos
+// quietly written to the SSD under an empty mount point.
 
+import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -17,6 +24,27 @@ export class UnsafePathError extends Error {
     super(message);
     this.name = 'UnsafePathError';
   }
+}
+
+export class MediaNotMountedError extends Error {
+  constructor(root, sentinel) {
+    super(
+      `The media folder ${root} has no ${sentinel} file, so the photo drive looks unplugged or unmounted. ` +
+        `Nothing was written. Mount the drive (or, for a brand-new empty media folder, create ${path.join(root, sentinel)}) and start again.`,
+    );
+    this.name = 'MediaNotMountedError';
+    this.code = 'media_not_mounted';
+    this.root = root;
+    this.sentinel = sentinel;
+  }
+}
+
+// Throws MediaNotMountedError unless <mediaDir>/<sentinel> exists. No sentinel
+// configured (development and tests) means no check.
+export function assertMediaMounted(mediaDir, sentinel) {
+  if (!sentinel) return;
+  const root = path.resolve(mediaDir);
+  if (!fsSync.existsSync(safeJoin(root, sentinel))) throw new MediaNotMountedError(root, sentinel);
 }
 
 // Joins `parts` under `root` and refuses anything that would escape it.
@@ -41,21 +69,26 @@ function extension(ext) {
   return clean;
 }
 
-export function createStorage(mediaDir) {
+// Options: `sentinel` (config.mediaSentinel): init() checks it first.
+export function createStorage(mediaDir, { sentinel = '' } = {}) {
   const root = path.resolve(mediaDir);
   const dirs = {
     originals: path.join(root, 'originals'),
     renditions: path.join(root, 'renditions'),
     uploads: path.join(root, 'uploads'),
+    backups: path.join(root, 'backups'),
   };
 
   return {
     root,
+    sentinel,
     originalsDir: dirs.originals,
     renditionsDir: dirs.renditions,
     uploadsDir: dirs.uploads,
+    backupsDir: dirs.backups,
 
     async init() {
+      assertMediaMounted(root, sentinel);
       await Promise.all(Object.values(dirs).map((dir) => fs.mkdir(dir, { recursive: true })));
     },
 

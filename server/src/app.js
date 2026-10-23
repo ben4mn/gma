@@ -11,6 +11,7 @@ import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import rateLimit from '@fastify/rate-limit';
 import { openDb } from './db/index.js';
+import { compileTrust, rateLimitKey, resolveClientIp } from './lib/client-ip.js';
 import { createEventHub } from './lib/events.js';
 import { httpError } from './lib/guards.js';
 import { redactUrl } from './lib/redact.js';
@@ -102,9 +103,10 @@ export async function buildApp(
           },
   });
 
-  const db = givenDb ?? openDb(config.dbPath);
-  const storage = createStorage(config.mediaDir);
+  // The drive check comes before anything is opened or created.
+  const storage = createStorage(config.mediaDir, { sentinel: config.mediaSentinel });
   await storage.init();
+  const db = givenDb ?? openDb(config.dbPath);
   const events = createEventHub(db, { log: app.log });
 
   app.decorate('config', config);
@@ -114,6 +116,7 @@ export async function buildApp(
   app.decorateRequest('user', null);
   app.decorateRequest('device', null);
   app.decorateRequest('session', null);
+  app.decorateRequest('clientIp', null);
 
   // Long-lived SSE streams would keep close() waiting; end them first.
   app.addHook('preClose', async () => events.close());
@@ -126,8 +129,16 @@ export async function buildApp(
   app.removeContentTypeParser('text/plain');
 
   await app.register(cookie);
+  // The client's address, once per request: CF-Connecting-IP only from a
+  // trusted proxy (TRUST_PROXY), else request.ip. Routes read request.clientIp.
+  const trust = compileTrust(config.trustProxy);
+  app.addHook('onRequest', async (request) => {
+    request.clientIp = resolveClientIp(request, trust);
+  });
+
   await app.register(rateLimit, {
     global: false, // routes opt in with { config: { rateLimit: { max, timeWindow } } }
+    keyGenerator: rateLimitKey, // per client (an IPv6 client's /64), never per proxy
     errorResponseBuilder: () => httpError(429, ...STATUS_DEFAULTS[429]),
   });
 

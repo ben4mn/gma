@@ -2,16 +2,26 @@
 
 import { buildApp } from './app.js';
 import { loadConfig } from './config.js';
+import { assertMediaMounted, MediaNotMountedError } from './lib/storage.js';
 
 let config;
 try {
   config = loadConfig(process.env);
+  // Refuse to start on an unmounted photo drive rather than write to the SSD.
+  assertMediaMounted(config.mediaDir, config.mediaSentinel);
 } catch (err) {
   console.error(`gma: ${err.message}`);
   process.exit(78); // EX_CONFIG
 }
 
-const app = await buildApp(config);
+let app;
+try {
+  app = await buildApp(config);
+} catch (err) {
+  if (!(err instanceof MediaNotMountedError)) throw err;
+  console.error(`gma: ${err.message}`); // the drive went away during start
+  process.exit(78);
+}
 
 let closing = false;
 async function shutdown(signal) {

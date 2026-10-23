@@ -49,6 +49,10 @@ export function detectInAppBrowser(ua = '', { standalone = false } = {}) {
   return null;
 }
 
+// A mail app's built-in Safari view (Gmail and others) looks like Safari but has
+// no Add to Home Screen; the way out is Safari's compass button.
+export const IOS_INSIDE_APP_STEP = 'Don’t see Add to Home Screen? You may be inside another app. Tap the Safari compass at the bottom (or ••• then Open in Safari), and try again there.';
+
 /** Steps to put the app on the Home Screen, for the platform detected above. */
 export function installGuide(platform, { canPrompt = false } = {}) {
   if (platform.standalone) return { kind: 'installed', steps: [] };
@@ -61,6 +65,7 @@ export function installGuide(platform, { canPrompt = false } = {}) {
           'Tap Share.',
           'Scroll down and tap Add to Home Screen. (If you don’t see it, tap View More first.)',
           'Make sure Open as Web App is turned on, then tap Add.',
+          IOS_INSIDE_APP_STEP,
         ],
       };
     }
@@ -71,6 +76,7 @@ export function installGuide(platform, { canPrompt = false } = {}) {
           'Tap the Share button at the bottom of Safari (the square with an arrow pointing up).',
           'Scroll down and tap Add to Home Screen.',
           'Tap Add in the top corner.',
+          IOS_INSIDE_APP_STEP,
         ],
       };
     }

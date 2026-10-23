@@ -6,13 +6,27 @@ import { createRecorder, MAX_MS } from '../lib/recorder.js';
 import { formatCountdown } from '../lib/time.js';
 import { SENT_MS } from './item.js';
 
+// Taps this soon after a voice screen changes are ignored: the second tap of a
+// double tap (or a tap aimed at Stop just as the 60 s ran out) must not land on
+// whatever the next screen put under her finger.
+export const SETTLE_MS = 700;
+
 export function renderVoice(ctx, params = {}) {
   const root = h('main', { class: 'screen-voice' });
-  let take = null;        // {blob, durationMs, filename}
+  let take = null;        // {blob, durationMs, filename}; kept until a new take replaces it
   let player = null;      // the <audio> made for one playback
   let playerUrl = null;
   let sentTimer = null;
-  let recorder = null;
+  let recorder = null;    // the one recorder; a stray one's result is ignored
+  let starting = false;   // asking for the microphone: further taps wait
+  let gone = false;       // the screen was left
+  let shownAt = 0;
+
+  // A click handler that ignores taps while the screen is still settling.
+  const settled = (fn) => (event) => {
+    if (Date.now() - shownAt < SETTLE_MS) return;
+    fn(event);
+  };
 
   const familyPrint = () => h('figure', { class: 'print voice-print' },
     ctx.state.familyPhoto ? photo(ctx.state.familyPhoto) : h('div', { class: 'voice-print-empty' }, icon('family')));
@@ -34,11 +48,17 @@ export function renderVoice(ctx, params = {}) {
   }
 
   function readyScreen(note) {
+    // After "Record again" her last message is still here until a new one is made.
+    const keep = take && h('button', { class: 'again-btn keep-btn', type: 'button', onClick: settled(() => show(recordedScreen())) },
+      icon('back'), 'Keep my last message');
     return layout(
-      h('p', { class: 'voice-help' }, note ?? 'Tap the red button and speak. Tap it again when you’re done.'),
+      h('p', { class: 'voice-help' }, note ?? (take
+        ? 'Your last message is still here. Tap the red button to record a new one.'
+        : 'Tap the red button and speak. Tap it again when you’re done.')),
       h('div', { class: 'voice-controls' },
-        h('button', { class: 'rec-btn', type: 'button', onClick: startRecording },
-          h('span', { class: 'rec-disc' }, icon('mic')), 'Tap to record')));
+        h('button', { class: 'rec-btn', type: 'button', onClick: settled(startRecording) },
+          h('span', { class: 'rec-disc' }, icon('mic')), 'Tap to record'),
+        keep));
   }
 
   function recordingScreen() {
@@ -47,7 +67,7 @@ export function renderVoice(ctx, params = {}) {
     const el = layout(
       h('p', { class: 'voice-help' }, 'I’m listening. Tap the button when you’re done.'),
       h('div', { class: 'voice-controls' },
-        h('button', { class: 'rec-btn is-recording', type: 'button', onClick: () => recorder?.stop() },
+        h('button', { class: 'rec-btn is-recording', type: 'button', onClick: settled(() => recorder?.stop()) },
           h('span', { class: 'rec-disc' }, icon('stop')), 'Stop'),
         h('div', { class: 'countdown', role: 'timer', 'aria-live': 'off' },
           count, h('span', { class: 'countdown-label' }, 'left'),
@@ -61,7 +81,7 @@ export function renderVoice(ctx, params = {}) {
 
   function recordedScreen() {
     const listen = h('button', { class: 'listen-btn', type: 'button' }, icon('play'), 'Hear it');
-    listen.addEventListener('click', () => {
+    listen.addEventListener('click', settled(() => {
       if (player) { stopPlayback(); listen.replaceChildren(icon('play'), 'Hear it'); return; }
       playerUrl = URL.createObjectURL(take.blob);
       player = new Audio(playerUrl);
@@ -69,13 +89,14 @@ export function renderVoice(ctx, params = {}) {
       ctx.setBusy(true);
       listen.replaceChildren(icon('stop'), 'Stop');
       player.play().catch(() => { stopPlayback(); listen.replaceChildren(icon('play'), 'Hear it'); });
-    });
+    }));
     return layout(
       h('p', { class: 'voice-help' }, `Your message is ${Math.max(1, Math.round(take.durationMs / 1000))} seconds long. Hear it, then send it.`),
       h('div', { class: 'voice-controls voice-controls--recorded' },
         listen,
-        h('button', { class: 'send-all-btn', type: 'button', onClick: send }, 'Send to everyone'),
-        h('button', { class: 'again-btn', type: 'button', onClick: () => { stopPlayback(); take = null; show(readyScreen()); } },
+        h('button', { class: 'send-all-btn', type: 'button', onClick: settled(send) }, 'Send to everyone'),
+        // kept clear of where Stop was (see .again-btn), and it throws nothing away
+        h('button', { class: 'again-btn', type: 'button', onClick: settled(() => { stopPlayback(); show(readyScreen()); }) },
           icon('again'), 'Record again')));
   }
 
@@ -90,24 +111,39 @@ export function renderVoice(ctx, params = {}) {
         h('button', { class: 'ok-btn', type: 'button', onClick: () => ctx.home() }, 'OK')));
   }
 
-  async function startRecording() {
+  async function startRecording(event) {
+    // One recorder at a time: a double tap must not open the microphone twice.
+    if (starting || recorder) return;
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
       show(readyScreen('The microphone isn’t answering right now. Please try again a little later.'));
       return;
     }
+    starting = true;
+    if (event?.currentTarget) event.currentTarget.disabled = true;
     const screen = recordingScreen();
-    recorder = createRecorder({
-      onTick: (left) => screen.update(left),
-      onDone: (result) => { ctx.setBusy(false); take = result; show(recordedScreen()); },
+    const rec = createRecorder({
+      onTick: (left) => { if (recorder === rec) screen.update(left); },
+      onDone: (result) => {
+        if (recorder !== rec || gone) return; // a recorder that was replaced or left behind
+        recorder = null;
+        ctx.setBusy(false);
+        take = result;
+        show(recordedScreen());
+      },
     });
+    recorder = rec;
     try {
       ctx.setBusy(true);
-      await recorder.start();
+      await rec.start();
+      if (recorder !== rec || gone) { rec.cancel(); return; }
       show(screen);
     } catch {
+      if (recorder !== rec || gone) return;
       ctx.setBusy(false);
       recorder = null;
       show(readyScreen('The microphone isn’t answering right now. Please try again a little later.'));
+    } finally {
+      starting = false;
     }
   }
 
@@ -118,7 +154,10 @@ export function renderVoice(ctx, params = {}) {
     show(sentScreen());
   }
 
-  function show(el) { root.replaceChildren(el); }
+  function show(el) {
+    shownAt = Date.now();
+    root.replaceChildren(el);
+  }
 
   if (params.view === 'recording') { const s = recordingScreen(); s.update(42_400); show(s); }
   else if (params.view === 'sent') show(sentScreen());
@@ -127,8 +166,11 @@ export function renderVoice(ctx, params = {}) {
   return {
     el: root,
     destroy() {
+      gone = true;
       clearTimeout(sentTimer);
-      recorder?.cancel();
+      const rec = recorder;
+      recorder = null;
+      rec?.cancel();
       stopPlayback();
     },
   };

@@ -1,156 +1,129 @@
-# Backups and the restore drill
+# Backups and restoring
 
-What matters, in order: the **originals** (the photos and videos the family
-sent; irreplaceable), the **database** (who sent what, Grandma's reactions and
-messages, people, settings), then the renditions (re-creatable from the
-originals, but slow). Three layers, all to an offsite bucket (Cloudflare R2 or
-Backblaze B2; the target is still to be chosen, see `docs/DECISIONS.md`):
+Ben's plan (2026-10-22, see `docs/DECISIONS.md`): **no extra copies on local
+disks.** Everything gma needs lives on the Seagate drive, and Ben will add a
+daily cloud backup of that whole drive, on the assumption that it will fail
+someday. So the one job here is to make sure the drive really does hold
+everything, in a form that restores.
 
-| What | How | How often | Lose at most |
-|---|---|---|---|
-| Database | Litestream 0.5 streams the SQLite WAL to the bucket | continuously | ~1 s |
-| Database | `sqlite3 .backup` snapshot, kept with restic | nightly | a day (if Litestream broke) |
-| Media | restic snapshots of `originals/` and `renditions/` | nightly | a day of uploads |
+## What is where
 
-The volumes are `gma_gma-data` (`/data/gma.sqlite`) and `gma_gma-media`
-(`/media/originals`, `/media/renditions`, `/media/uploads` = tus scratch, never
-backed up). Find them on the host with:
+| What | Where on the box | In a backup of the drive? |
+|---|---|---|
+| Originals (the photos and videos the family sent; irreplaceable) | `/mnt/seagate/gma/media/originals/` | yes |
+| Renditions (what phones and the frame show; re-creatable, slowly) | `/mnt/seagate/gma/media/renditions/` | yes |
+| **Nightly database snapshots** | `/mnt/seagate/gma/media/backups/gma-YYYY-MM-DD.sqlite` | yes |
+| Live database (people, who sent what, Grandma's reactions and messages, settings) | the `gma_data` volume on the SSD (`/data/gma.sqlite` in the containers) | no: its snapshot is |
+| Upload scratch (half-finished uploads) | `/mnt/seagate/gma/media/uploads/` | yes, but not needed |
+| `.env` (the secret key and the push keys) | `/home/ben/gma/.env` | **no**, see below |
 
-```sh
-docker volume inspect gma_gma-data  -f '{{ .Mountpoint }}'   # /var/lib/docker/volumes/gma_gma-data/_data
-docker volume inspect gma_gma-media -f '{{ .Mountpoint }}'
-```
+The database stays on the SSD because SQLite waits for the disk on every save
+(an fsync), and the Seagate takes about 164 ms for one. Instead, at **03:15**
+(in the timezone set in `/admin`) the worker copies the live database with
+SQLite's backup API to `backups/gma-YYYY-MM-DD.sqlite` on the drive, checks the
+copy, and keeps the newest 7. A worker that starts after 03:15 without that
+day's snapshot makes it then. Copying the live `gma.sqlite` file directly
+isn't safe (a copy taken mid-write may not open); the snapshot is.
 
-Credentials go in `/etc/gma-backup.env` (root-only, `chmod 600`), never in git:
+So a backup of the drive taken after 03:15 holds the photos, the videos and a
+database at most a day old.
 
-```sh
-# R2: an API token with Object Read & Write on the one bucket
-BACKUP_S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
-BACKUP_BUCKET=gma-backups
-AWS_ACCESS_KEY_ID=…
-AWS_SECRET_ACCESS_KEY=…
-RESTIC_REPOSITORY=s3:https://<account-id>.r2.cloudflarestorage.com/gma-backups/restic
-RESTIC_PASSWORD_FILE=/etc/gma-restic.pass   # keep a copy in Ben's password manager: without it the backups are unreadable
-```
-
-For B2, use its S3 endpoint (`https://s3.<region>.backblazeb2.com`) and an
-application key limited to the bucket.
-
-## 1. Litestream (continuous database replication)
-
-Run it as a sidecar next to the stack, sharing the data volume. Save as
-`deploy/docker-compose.backup.yml` on the server and start both files together:
-
-```yaml
-services:
-  litestream:
-    image: litestream/litestream:0.5
-    restart: unless-stopped
-    command: ["replicate", "-config", "/etc/litestream.yml"]
-    env_file: /etc/gma-backup.env
-    volumes:
-      - gma-data:/data
-      - ./litestream.yml:/etc/litestream.yml:ro
-    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
-```
-
-```yaml
-# deploy/litestream.yml (Litestream expands ${VARS} from its environment)
-dbs:
-  - path: /data/gma.sqlite
-    replica:
-      type: s3
-      endpoint: ${BACKUP_S3_ENDPOINT}
-      bucket: ${BACKUP_BUCKET}
-      path: litestream/gma
-      region: auto
-```
+Check that snapshots are being made:
 
 ```sh
-docker compose --env-file .env -f deploy/docker-compose.yml -f deploy/docker-compose.backup.yml up -d
-docker compose -p gma logs litestream --tail 20    # no errors; it should mention the replica
+ls -l /mnt/seagate/gma/media/backups/      # one file per night, the newest from today (after 03:15)
 ```
 
-Notes: the app and the worker keep SQLite's automatic checkpoints, which is
-fine with Litestream; don't add manual `wal_checkpoint(TRUNCATE)` calls. Check
-the config keys against `litestream version`'s docs when you install it: 0.5
-changed the replica format (LTX) and replicas from 0.3 can't be restored by 0.5.
+## What is NOT backed up yet
 
-## 2. Nightly snapshot and media backup (restic)
+- **Everything, until Ben's cloud backup of the drive exists.** Until then a
+  dead or lost Seagate means the photos, the videos and the snapshots are gone;
+  the live database on the SSD survives, but it only points at missing files.
+  This is accepted for the draft, which holds no real family data. The drive's
+  SMART health is unknown (`smartctl` isn't installed).
+- **`.env`.** `SECRET_KEY` and the VAPID keys must be the old ones after a
+  restore, or every family member is signed out and every phone stops getting
+  notifications. Keep a copy of `.env` in Ben's password manager (not on the
+  drive: the drive's backup shouldn't hold the keys to everything).
+- **Up to a day of activity** between the last snapshot and a failure of the
+  SSD: reactions, messages, new people and settings from that day. Photos sent
+  that day are on the drive, but the restored database won't list them.
+- The tunnel's credentials (`/home/ben/.cloudflared/c0773eb4-….json`). If lost,
+  make a new tunnel and update `.env` and `deploy/cloudflared.yml`.
 
-Install on the host: `sudo apt install sqlite3 restic`. Initialise the
-repository once: `sudo sh -c 'set -a; . /etc/gma-backup.env; restic init'`.
+When Ben sets up the cloud backup, it should include `/mnt/seagate/gma/media/`
+(all of it, or at least `originals/`, `renditions/` and `backups/`; `uploads/`
+can be skipped), and it is worth checking once that a restored snapshot opens
+(below).
 
-`/usr/local/sbin/gma-backup` (root, `chmod 700`):
+## Restoring the database from a snapshot
+
+Use this when the database on the SSD is lost or damaged, or to go back to a
+night before a mistake. Grandma's frame and the phones reconnect by themselves
+afterwards.
 
 ```sh
-#!/bin/sh
-set -eu
-. /etc/gma-backup.env
-export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY RESTIC_REPOSITORY RESTIC_PASSWORD_FILE
+cd /home/ben/gma
+ls -l /mnt/seagate/gma/media/backups/                  # pick a snapshot
+SNAP=gma-2026-10-21.sqlite                             # the one you picked
 
-DATA=$(docker volume inspect gma_gma-data -f '{{ .Mountpoint }}')
-MEDIA=$(docker volume inspect gma_gma-media -f '{{ .Mountpoint }}')
-SNAP=/var/backups/gma
-mkdir -p "$SNAP"
+# 1. Stop gma (the app, the worker and the tunnel).
+docker compose stop
 
-# A consistent copy while the app keeps running (.backup is SQLite's online backup).
-sqlite3 "$DATA/gma.sqlite" ".backup '$SNAP/gma.sqlite'"
-sqlite3 "$SNAP/gma.sqlite" 'PRAGMA integrity_check;' | grep -qx ok
+# 2. Check the snapshot opens and looks right.
+docker compose run --rm --no-deps app node -e "
+  const db = require('better-sqlite3')('/media/backups/$SNAP', { readonly: true });
+  console.log(db.pragma('integrity_check', { simple: true }));                   // ok
+  console.log(db.prepare('SELECT COUNT(*) AS people FROM users').get());
+  console.log(db.prepare('SELECT COUNT(*) AS items, MAX(created_at) AS newest FROM items').get());
+"
 
-restic backup --tag gma --host homelab "$SNAP/gma.sqlite" "$MEDIA/originals" "$MEDIA/renditions"
-restic forget --tag gma --keep-daily 7 --keep-weekly 8 --keep-monthly 24 --prune
+# 3. Put it in the gma_data volume as gma.sqlite. The old file and its -wal/-shm
+#    files are moved aside first: a leftover -wal from the old database must
+#    never meet the restored one.
+docker compose run --rm --no-deps app sh -c "
+  set -e
+  mkdir -p /data/before-restore
+  for f in gma.sqlite gma.sqlite-wal gma.sqlite-shm; do
+    if [ -e /data/\$f ]; then mv /data/\$f /data/before-restore/; fi
+  done
+  cp /media/backups/$SNAP /data/gma.sqlite
+"
+
+# 4. Start gma again.
+docker compose up -d
+docker compose ps                                      # app and worker healthy
+curl -s http://127.0.0.1:3064/healthz                  # {"ok":true,…}
 ```
 
-Cron (`/etc/cron.d/gma-backup`), after night falls on the frame:
-
-```
-30 3 * * * root /usr/local/sbin/gma-backup >> /var/log/gma-backup.log 2>&1
-```
-
-Once a month, also run `restic check --read-data-subset 5%`.
-
-rclone works instead of restic if you'd rather keep plain files in the bucket
-(`rclone sync "$MEDIA/originals" r2:gma-backups/originals`), but you lose
-versioning: a deleted photo disappears from the bucket at the next sync.
-
-## 3. Restore drill (every three months, and after any change to this setup)
-
-Do it on a scratch directory, not over the live volumes.
+Then sign in and open `/admin` → The frame for the health line. Once you're
+happy, delete the old copy (it's on the SSD and holds family data):
 
 ```sh
-GMA_REPO=/srv/gma            # where this repo is checked out on the server
-mkdir -p /tmp/gma-drill && cd /tmp/gma-drill
-set -a; . /etc/gma-backup.env; set +a
-
-# 1. The database from Litestream (newest state), then from last night's snapshot.
-docker run --rm --env-file /etc/gma-backup.env -v "$PWD":/out -v "$GMA_REPO/deploy/litestream.yml":/etc/litestream.yml:ro \
-  litestream/litestream:0.5 restore -config /etc/litestream.yml -o /out/litestream.sqlite /data/gma.sqlite
-restic restore latest --tag gma --target ./restic --include /var/backups/gma/gma.sqlite
-
-for db in litestream.sqlite restic/var/backups/gma/gma.sqlite; do
-  sqlite3 "$db" 'PRAGMA integrity_check;'                          # ok
-  sqlite3 "$db" "SELECT COUNT(*) FROM users; SELECT COUNT(*) FROM items; SELECT MAX(created_at) FROM items;"
-done
-
-# 2. The media: restore a sample and compare with the database.
-restic restore latest --tag gma --target ./restic --include originals
-find restic -path '*originals*' -type f | wc -l   # ≈ SELECT COUNT(*) FROM items WHERE original_path IS NOT NULL
+docker compose run --rm --no-deps app rm -rf /data/before-restore
 ```
 
-Note the date and the counts (Ben's notes are fine). Then delete
-`/tmp/gma-drill`: it holds family photos.
+Photos sent after that snapshot are still on the drive but not in the restored
+database. They don't show anywhere; they can be found by date under
+`originals/` if someone needs one back.
 
-### A real restore (the homelab died)
+## Restoring everything on a new box
 
-1. Set up the new host: Docker, this repo, the same `.env` (the `SECRET_KEY` and
-   VAPID keys must be the old ones, or every session and push subscription breaks).
-2. `docker compose --env-file .env -f deploy/docker-compose.yml create` makes the
-   empty volumes without starting anything.
-3. Restore the database into the data volume (Litestream for the newest state,
-   or the nightly snapshot) as `gma.sqlite`; restore `originals/` and
-   `renditions/` into the media volume. Then `chown -R 1000:1000` both (the
-   image runs as `node`, uid 1000).
-4. `docker compose … up -d`, check `/healthz`, sign in, and open `/admin` →
-   The frame for the health line. Grandma's frame reconnects by itself (its
-   pairing link is in the kiosk setup), so nothing changes at her end.
+1. Mount the replacement drive at `/mnt/seagate` and restore the cloud backup
+   into `/mnt/seagate/gma/media/` (it must contain `.gma-media`; the app won't
+   start without it). Owner: `sudo chown -R 1000:1000 /mnt/seagate/gma/media`
+   if the restore didn't keep it.
+2. `gh repo clone ben4mn/gma /home/ben/gma`, and put the old `.env` back (same
+   `SECRET_KEY` and VAPID keys). The tunnel's credentials go back in
+   `/home/ben/.cloudflared/`.
+3. `docker compose up -d --build`, which makes an empty `gma_data` and a new
+   database, then follow "Restoring the database from a snapshot" above with the
+   newest snapshot.
+
+## Optional: continuous database replication (Litestream)
+
+Not part of the plan. If losing up to a day of reactions and messages ever
+matters, Litestream 0.5 can stream the database's changes to a bucket (R2 or
+B2) every second, as a sidecar sharing the `gma_data` volume. That adds an
+offsite target and its credentials to look after; the nightly snapshot on the
+drive stays either way.

@@ -59,7 +59,7 @@ test('the family feed lists ready items newest first, with renditions, the sende
 
   const item = body.items[1];
   assert.equal(item.caption, 'Lily at the farm');
-  assert.deepEqual(item.user, { id: sarah.id, name: 'Sarah', color: '#3A5236' });
+  assert.deepEqual(item.user, { id: sarah.id, name: 'Sarah', short_name: 'Sarah', color: '#3A5236' });
   assert.equal(item.can_edit, false);
   assert.equal(item.renditions.display.url, `/media/${older.id}/display?v=${older.ready_at}`);
   assert.equal(item.renditions.thumb.mime, 'image/webp');

@@ -40,6 +40,8 @@ function apiAnswer(path, signedIn) {
   return [404, { error: { code: 'not_found', message: 'Not found.' } }];
 }
 
+const patches = []; // PATCH bodies the admin screens sent
+
 let server;
 let origin;
 let browser;
@@ -50,6 +52,14 @@ before(async () => {
   server = createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
     if (url.pathname === '/api/events') { res.writeHead(204); return res.end(); }
+    if (req.method === 'PATCH' && url.pathname.startsWith('/api/admin/people/')) {
+      let raw = '';
+      for await (const chunk of req) raw += chunk;
+      const body = JSON.parse(raw || '{}');
+      patches.push({ path: url.pathname, body });
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ user: { ...user, short_name: body.short_name } }));
+    }
     if (url.pathname.startsWith('/api/')) {
       const [status, body] = apiAnswer(url.pathname, req.headers.cookie?.includes('signed=1'));
       res.writeHead(status, { 'content-type': 'application/json' });
@@ -111,4 +121,23 @@ test('signed out: a private page goes to sign in; join and confirm render', asyn
   await visit('/mine', { signedIn: false, expect: 'Welcome back' });
   await visit('/join/tok', { signedIn: false, expect: 'Welcome to Grandma’s family' });
   await visit('/confirm?t=abc', { signedIn: false, expect: 'One more tap' });
+});
+
+test('admin: Ben changes what Grandma calls someone', async (t) => {
+  if (!browser) return t.skip('Playwright headless shell not installed');
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
+  await context.addCookies([{ name: 'signed', value: '1', url: origin }]);
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (err) => errors.push(err.message));
+  await page.goto(`${origin}/admin/people`);
+  await page.getByText('Grandma calls them').waitFor({ timeout: 5000 });
+  assert.equal(await page.locator('.grandma-name b').first().textContent(), 'Sarah'); // the first word, until Ben chooses
+  await page.getByRole('button', { name: 'Change what Grandma calls Sarah Lee' }).click();
+  await page.getByLabel('What Grandma calls them').fill('  Sally  ');
+  await page.getByRole('button', { name: 'Save' }).click();
+  await page.getByText('Grandma calls them Sally').waitFor({ timeout: 5000 });
+  await context.close();
+  assert.deepEqual(patches.at(-1), { path: '/api/admin/people/u1', body: { short_name: 'Sally' } });
+  assert.deepEqual(errors, []);
 });

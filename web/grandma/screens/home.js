@@ -1,12 +1,12 @@
-// Home: the slideshow print (left, as large as the screen allows), "New for you"
-// (right), and "Message to the whole family" below it.
+// Home: the slideshow print (left, as large as the screen allows, standing at the
+// top of its area so no empty band sits above it), "New for you" (right), and
+// "Message to the whole family" below it.
 import { h, photo, icon } from '../lib/dom.js';
-import { heroLayout, HERO } from '../lib/layout.js';
+import { heroLayout, HERO, HERO_AREA } from '../lib/layout.js';
 import { cardTitle, cardDetail } from '../lib/cards.js';
 
 export const SLIDE_MS = 40_000;
 const FADE_MS = 1600;
-const HERO_AREA = { width: 760, height: 640 };
 const MAX_CARDS = 3;
 
 function corners() {
@@ -75,7 +75,9 @@ export function renderHome(ctx) {
           h('span', { class: 'voice-text' }, 'Message to the whole family')))));
 
   // ----- the slideshow -----
-  let index = Math.min(ctx.slideIndex ?? 0, Math.max(0, slideshow.length - 1));
+  // Back on the same photo after a redraw, even when newer ones sorted in ahead of it.
+  const sameSlide = ctx.slideId ? slideshow.findIndex((i) => i.id === ctx.slideId) : -1;
+  let index = sameSlide >= 0 ? sameSlide : Math.min(ctx.slideIndex ?? 0, Math.max(0, slideshow.length - 1));
   let current = null;
   let timer = null;
   let paused = false;
@@ -100,6 +102,7 @@ export function renderHome(ctx) {
     }
     index = i;
     ctx.slideIndex = i;
+    ctx.slideId = item.id;
     const old = current;
     current = el;
     hero.append(el);

@@ -10,6 +10,7 @@
 import { httpError, requireUser } from '../lib/guards.js';
 import { newId } from '../lib/ids.js';
 import { pushConfigured, sendToUser } from '../lib/push.js';
+import { perIp } from '../lib/rate-limits.js';
 import { now } from '../lib/time.js';
 
 const MAX_SUBSCRIPTIONS_PER_USER = 10;
@@ -116,7 +117,7 @@ export default async function pushRoutes(app, { config, db, pushSender = undefin
 
   app.post(
     '/api/push/test',
-    { preHandler: requireUser, config: { rateLimit: { max: 10, timeWindow: '10 minutes' } } },
+    { preHandler: requireUser, config: perIp(10, '10 minutes') },
     async (request) => {
       requirePushConfigured(config);
       const userId = request.user.id;

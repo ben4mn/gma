@@ -121,8 +121,8 @@ export function sameOrigin(cookie, extra = {}) {
   return { origin: TEST_ORIGIN, ...(cookie ? { cookie } : {}), ...extra };
 }
 
-// A throwaway web/ folder for page tests: the family shell, the frame shell,
-// an asset and a module, each with recognisable contents.
+// A throwaway web/ folder for page tests: the family shell, the frame shell and
+// its service worker, an asset and a module, each with recognisable contents.
 export async function makeWebFixture(tempDir) {
   const webDir = path.join(tempDir, 'web');
   await fs.mkdir(path.join(webDir, 'grandma'), { recursive: true });
@@ -130,6 +130,7 @@ export async function makeWebFixture(tempDir) {
   await fs.mkdir(path.join(webDir, 'app'), { recursive: true });
   await fs.writeFile(path.join(webDir, 'index.html'), '<!doctype html><title>family shell</title>');
   await fs.writeFile(path.join(webDir, 'grandma', 'index.html'), '<!doctype html><title>frame shell</title>');
+  await fs.writeFile(path.join(webDir, 'grandma', 'sw.js'), '// the frame worker\n');
   await fs.writeFile(path.join(webDir, 'assets', 'mark.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
   await fs.writeFile(path.join(webDir, 'app', 'main.js'), 'export const ok = true;\n');
   await fs.writeFile(path.join(webDir, '.secret'), 'nope');

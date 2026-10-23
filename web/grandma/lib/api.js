@@ -35,7 +35,12 @@ export function createApi({ fixture = false, base = '' } = {}) {
   function send(entry) {
     const { kind, payload, client_id } = entry;
     if (kind === 'react') return post('/api/frame/react', { item_id: payload.item_id, reaction: payload.reaction, client_id });
-    if (kind === 'preset') return post('/api/frame/preset', { item_id: payload.item_id, preset_id: payload.preset_id, client_id });
+    if (kind === 'preset') {
+      // preset_text lets a preset Ben deleted after the tap still arrive (the server's fallback)
+      const body = { item_id: payload.item_id, preset_id: payload.preset_id, client_id };
+      if (typeof payload.preset_text === 'string' && payload.preset_text) body.preset_text = payload.preset_text;
+      return post('/api/frame/preset', body);
+    }
     if (kind === 'seen') return post('/api/frame/seen', { item_ids: payload.item_ids });
     if (kind === 'voice') {
       const form = new FormData();

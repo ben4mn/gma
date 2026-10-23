@@ -5,7 +5,7 @@
 //
 //   npm run device:pair -- --name "Grandma's frame"
 
-import { cleanName, logAdmin, pairDevice } from '../src/routes/admin.js';
+import { cleanName, logAdmin, pairDevice } from '../src/lib/admin.js';
 import { EXIT, UsageError, openFromEnv, parseFlags, runIfMain } from './lib/cli.js';
 
 export const USAGE = 'Usage: npm run device:pair -- --name "Grandma\'s frame"';

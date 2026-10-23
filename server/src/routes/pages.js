@@ -9,6 +9,8 @@
 //   /join/:token are public (the service worker precaches the shell from /signin).
 // - /grandma/ serves the frame, web/grandma/index.html, to a paired frame (or an
 //   admin). GET /grandma (no slash, the pairing link) belongs to the frame routes.
+//   The frame's service worker, /grandma/sw.js, is sent with
+//   Service-Worker-Allowed: /grandma so its scope covers that link as well.
 
 import fastifyStatic from '@fastify/static';
 import { authenticate } from '../lib/guards.js';
@@ -17,6 +19,9 @@ import { stripSecretParams } from '../lib/redact.js';
 const YEAR = 'public, max-age=31536000, immutable';
 const MONTH = 'public, max-age=2592000';
 const REVALIDATE = 'no-cache';
+
+const FRAME_WORKER = '/grandma/sw.js';
+const FRAME_WORKER_SCOPE = '/grandma';
 
 const PRIVATE_PAGES = ['/', '/from-grandma', '/mine', '/upload', '/you'];
 const PUBLIC_PAGES = ['/signin', '/confirm', '/join/:token'];
@@ -44,6 +49,9 @@ export default async function pageRoutes(app, { config }) {
     setHeaders(reply, filePath) {
       const rel = filePath.slice(config.webDir.length).replaceAll('\\', '/');
       reply.header('cache-control', cacheControlFor(rel));
+      // The frame's worker lives in /grandma/ but controls /grandma too, the
+      // pairing link the kiosk opens at boot (so it opens offline after a power cut).
+      if (rel === FRAME_WORKER) reply.header('service-worker-allowed', FRAME_WORKER_SCOPE);
     },
   });
 

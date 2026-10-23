@@ -16,7 +16,7 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { Server } from '@tus/server';
 import { FileStore } from '@tus/file-store';
-import { requireUser } from '../lib/guards.js';
+import { httpError, requireUser } from '../lib/guards.js';
 import { newId } from '../lib/ids.js';
 import { sniffFile } from '../lib/media.js';
 import { enqueue } from '../jobs/queue.js';
@@ -37,6 +37,24 @@ const WRONG_KIND = {
 const CAPTION_TOO_LONG = {
   status_code: 400,
   body: `That caption is too long. Please keep it under ${CAPTION_MAX} characters.\n`,
+};
+
+// One person's budget, so a careless or compromised account can't fill the
+// drive Ben's other apps share: files and bytes finished in the last 24 hours,
+// and a floor of free space every new upload must leave on the drive.
+export const UPLOAD_LIMITS = Object.freeze({
+  filesPerDay: 200,
+  bytesPerDay: 10 * 1024 ** 3, // 10 GB
+  minFreeBytes: 50 * 1024 ** 3, // 50 GB (production; 0 elsewhere unless set)
+});
+const DAY_MS = 24 * 60 * 60 * 1000;
+const OVER_DAILY_BUDGET = {
+  status_code: 429,
+  body: "You've shared a lot today, thank you! Please send the rest tomorrow.\n",
+};
+const DRIVE_FULL = {
+  status_code: 507,
+  body: "Grandma's photo drive is nearly full, so we can't take this one right now. Ben has been told.\n",
 };
 
 function clean(value, max) {
@@ -85,8 +103,34 @@ export async function sweepScratch(dir, { maxAgeMs = SCRATCH_MAX_AGE_MS, now = D
   return removed;
 }
 
-export default async function uploadRoutes(app, { config, db }) {
+export default async function uploadRoutes(app, { config, db, uploadLimits = {} }) {
   const { storage } = app;
+  const limits = {
+    ...UPLOAD_LIMITS,
+    minFreeBytes: config.isProduction ? UPLOAD_LIMITS.minFreeBytes : 0,
+    ...uploadLimits,
+  };
+
+  // Throws a tus error when this upload would go over the person's daily
+  // budget or leave the drive below its free-space floor.
+  async function checkBudget(req, userId, size) {
+    const since = Date.now() - DAY_MS;
+    const used = db
+      .prepare('SELECT COUNT(*) AS files, COALESCE(SUM(original_bytes), 0) AS bytes FROM items WHERE user_id = ? AND created_at > ?')
+      .get(userId, since);
+    if (used.files >= limits.filesPerDay || used.bytes + (size ?? 0) > limits.bytesPerDay) {
+      contextOf(req).log?.warn({ userId, files: used.files, bytes: used.bytes }, 'Upload refused: daily budget');
+      throw OVER_DAILY_BUDGET;
+    }
+    if (limits.minFreeBytes > 0) {
+      const disk = await fs.statfs(storage.uploadsDir);
+      const free = disk.bavail * disk.bsize;
+      if (free - (size ?? 0) < limits.minFreeBytes) {
+        contextOf(req).log?.error({ free, size }, 'Upload refused: the media drive is nearly full');
+        throw DRIVE_FULL;
+      }
+    }
+  }
   // tus hands its hooks the web Request we built; this maps it back to the
   // signed-in user and the request's logger.
   const contexts = new WeakMap();
@@ -139,8 +183,9 @@ export default async function uploadRoutes(app, { config, db }) {
     path: UPLOAD_PATH,
     datastore,
     maxSize: config.maxUploadBytes,
-    respectForwardedHeaders: config.trustProxy,
-    // A relative Location survives nginx and the tunnel whatever they forward.
+    // A relative Location survives the tunnel whatever it forwards, so tus never
+    // needs X-Forwarded-Host/-Proto and is told not to read them.
+    respectForwardedHeaders: false,
     relativeLocation: true,
     disableTerminationForFinishedUploads: true,
     allowedOrigins: [config.publicOrigin],
@@ -158,7 +203,9 @@ export default async function uploadRoutes(app, { config, db }) {
     async onUploadCreate(req, upload) {
       const user = userOf(req);
       if (!user) throw NOT_SIGNED_IN;
-      return { metadata: normaliseMetadata(upload.metadata ?? {}, user.id) };
+      const metadata = normaliseMetadata(upload.metadata ?? {}, user.id);
+      await checkBudget(req, user.id, upload.size);
+      return { metadata };
     },
 
     async onUploadFinish(req, upload) {
@@ -176,8 +223,18 @@ export default async function uploadRoutes(app, { config, db }) {
     },
   });
 
-  // tus reads the request body itself, straight from the socket.
+  // Only tus bodies here, and none is ever buffered: tus reads the chunk itself,
+  // straight from the socket. The root JSON parser is dropped in this plugin, so
+  // a JSON (or any other) body is refused with a 415 before a byte of it is
+  // read, instead of being parsed into memory. Bodiless tus requests (creation,
+  // HEAD, DELETE) carry nothing to parse whatever their Content-Type says.
+  app.removeAllContentTypeParsers();
   app.addContentTypeParser('application/offset+octet-stream', (request, payload, done) => done(null));
+  app.addContentTypeParser('*', (request, payload, done) => {
+    const { 'content-length': length, 'transfer-encoding': chunked } = request.headers;
+    if (chunked === undefined && (length === undefined || length === '0')) return done(null);
+    done(httpError(415, 'unsupported_media_type', 'Uploads only take photo and video data.'));
+  });
 
   // tus's web API (handleWeb) with a standard Request: the hooks get exactly
   // this object back, and the response is small enough to write directly.
@@ -206,8 +263,11 @@ export default async function uploadRoutes(app, { config, db }) {
     app.route({
       method: ['POST', 'HEAD', 'PATCH', 'DELETE'],
       url,
-      preHandler: requireUser,
-      bodyLimit: config.maxUploadBytes,
+      // New uploads per person (chunks of one upload are PATCHes, never limited).
+      config: { rateLimit: { max: 120, timeWindow: '1 hour', keyGenerator: (request) => request.user?.id ?? request.clientIp, allowList: (request) => request.method !== 'POST' } },
+      // Signed in before the body is touched (onRequest runs before parsing), so
+      // nobody can make the app read a large body without a session.
+      onRequest: requireUser,
       handler,
     });
   }

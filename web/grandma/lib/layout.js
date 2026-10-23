@@ -8,7 +8,10 @@ export function fitBox(width, height, maxW, maxH) {
   return { width: Math.floor(width * scale), height: Math.floor(height * scale) };
 }
 
-export const HERO = Object.freeze({ mat: 18, caption: 96, noteMin: 250, gap: 28 });
+export const HERO = Object.freeze({ mat: 18, caption: 88, noteMin: 250, gap: 28 });
+
+/** Home's photo area (grandma.css: .stage--home's first column and height). */
+export const HERO_AREA = Object.freeze({ width: 784, height: 640 });
 
 /**
  * The Home slideshow print. Portraits stand full height with the sender's note
@@ -24,4 +27,19 @@ export function heroLayout(item, area, k = HERO) {
   }
   const photo = fitBox(w, h, area.width - 2 * k.mat, area.height - k.mat - k.caption);
   return { mode: 'landscape', photo };
+}
+
+/**
+ * The open photo (grandma.css: .viewer-main's first cell, 656 x 532, with a 16 px
+ * mat). Landscapes and squares fill that cell above the reactions; portraits,
+ * which need height rather than width, stand the full height of the cell with
+ * the sender's note beside them ('pair'), so the space either side isn't wasted.
+ */
+export const OPEN = Object.freeze({ cell: Object.freeze({ width: 656, height: 532 }), mat: 16 });
+
+export function openLayout(item, k = OPEN) {
+  const w = item?.width > 0 ? item.width : 3;
+  const h = item?.height > 0 ? item.height : 2;
+  const photo = fitBox(w, h, k.cell.width - 2 * k.mat, k.cell.height - 2 * k.mat);
+  return { mode: w / h < 1 ? 'pair' : 'cell', photo };
 }

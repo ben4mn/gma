@@ -97,14 +97,16 @@ See `tailscale.md`: join with a tagged auth key (`tag:gma-kiosk`, which turns ke
 
 ## 7. Night mode
 
-Night is 21:00 to 07:00 by default. Two things happen:
+Night is 21:00 to 07:00 by default, and **Ben sets it in one place: the night hours in `/admin`**. Two things follow them:
 
-1. **The web app** (driven by the night hours in `/admin`) dims, rests the slideshow behind a big clock, and treats the first tap only as "wake up".
-2. **`gma-display`** (on the Pi, driven by `NIGHT_START`/`NIGHT_END` in `/etc/default/gma-kiosk`) checks every minute:
+1. **The web app** dims, rests the slideshow behind a big clock, and treats the first tap only as "wake up".
+2. **`gma-display`** (on the Pi) asks the server for the same hours every 5 minutes (`GET /api/frame/display`, with the frame's own token as `Authorization: Bearer …`; the origin and the token come from `KIOSK_URL` in `/etc/default/gma-kiosk`, and the token is never logged or put on a command line). It keeps the last good answer in `/var/lib/gma-kiosk/display.json`, so a night without internet still dims on time, and it reads the hours in the time zone `/admin` uses. Once a minute it applies them:
    - **DSI panel:** sets the backlight to `NIGHT_BRIGHTNESS_PERCENT` (default 10 %) at night and `DAY_BRIGHTNESS_PERCENT` (100 %) by day. Never fully off, so a tap always shows something.
-   - **HDMI panel:** does nothing (the app's CSS dimming is all there is), unless `DISPLAY_OFF_AT_NIGHT=1`: then it switches the output off with `wlr-randr` at night and on at `NIGHT_END`. Taps do not wake it in that mode.
+   - **HDMI panel:** does nothing (the app's CSS dimming is all there is), unless `DISPLAY_OFF_AT_NIGHT=1`: then it switches the output off with `wlr-randr` at night and on when the night ends. Taps do not wake it in that mode.
 
-**Keep the two night windows the same.** Change both: `/admin`, and `install.sh --night 21:30-07:00` (or edit the file and `sudo systemctl restart gma-display`). See what it is doing: `sudo gma-display --status`.
+`NIGHT_START`/`NIGHT_END` in `/etc/default/gma-kiosk` (`install.sh --night 21:30-07:00`) are only the fallback for a frame that has never reached the server (a fresh install with no internet yet); after the first answer the saved copy wins, even offline. If the server refuses the token (the frame was unpaired in `/admin`), `gma-display` says so once in its log and keeps the last hours it had.
+
+See what it is doing, and where the hours came from: `sudo gma-display --status` (it reads the saved answer and changes nothing). Ask the server right now: `sudo systemctl restart gma-display`. Its log: `journalctl -u gma-display`.
 
 ## 8. Sound: microphone and speaker
 

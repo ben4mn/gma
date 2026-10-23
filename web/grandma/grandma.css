@@ -125,17 +125,18 @@ body::before {
 .note-text { font-family: var(--font-serif); font-variation-settings: var(--soft); font-size: 30px; line-height: 1.3; color: var(--ink); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 7; overflow: hidden; overflow-wrap: anywhere; }
 
 /* ================= Home ================= */
-.stage--home { position: absolute; top: 136px; left: var(--edge); right: var(--edge); bottom: 24px; display: grid; grid-template-columns: 760px 1fr; gap: 36px; }
+/* the photo area is 784 x 640 (lib/layout.js HERO_AREA); the print stands at its top */
+.stage--home { position: absolute; top: 136px; left: var(--edge); right: var(--edge); bottom: 24px; display: grid; grid-template-columns: 784px 1fr; gap: 28px; }
 .hero { position: relative; min-width: 0; }
 .hero-empty { position: absolute; inset: 0; display: grid; place-items: center; font-family: var(--font-serif); font-size: 32px; color: var(--ink-muted); text-align: center; }
-.slide { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; opacity: 1; }
+.slide { position: absolute; inset: 0; display: flex; align-items: flex-start; justify-content: center; opacity: 1; }
 .slide.is-entering { opacity: 0; transition: opacity 1.6s ease-out; }
 .slide.is-entering.is-on { opacity: 1; }
 .print--hero { padding: 18px; }
 .slide--landscape .print--hero { padding-bottom: 0; }
 .slide--portrait { gap: 28px; justify-content: flex-start; }
 .slide--portrait .note { flex: 1; min-width: 0; margin-top: 60px; }
-.mat-caption { display: flex; align-items: center; gap: 22px; height: 96px; padding: 0 6px; min-width: 0; }
+.mat-caption { display: flex; align-items: center; gap: 22px; height: 88px; padding: 0 6px; min-width: 0; }
 .mat-caption .who { flex: none; font-family: var(--font-serif); font-variation-settings: var(--soft); font-size: 40px; font-weight: 600; color: var(--ink); max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mat-caption .what { min-width: 0; font-family: var(--font-serif); font-variation-settings: var(--soft); font-size: 30px; line-height: 1.2; color: var(--ink); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .mat-caption .when { margin-left: auto; flex: none; font-size: 24px; font-weight: 600; color: var(--ink-muted); }
@@ -166,25 +167,29 @@ body::before {
 
 .voice {
   position: relative; flex: 1; min-height: 132px; max-height: 300px; margin-top: 6px;
-  display: grid; grid-template-columns: 120px 1fr; align-items: center; gap: 20px; padding: 0 20px 0 18px;
+  display: grid; grid-template-columns: 112px 1fr; align-items: center; gap: 18px; padding: 0 18px 0 16px;
   border-radius: var(--r-card); background: var(--voice-card); color: var(--voice-ink); box-shadow: var(--shadow-card);
 }
 .voice:active { background: var(--terracotta-press); box-shadow: var(--shadow-press); }
-.voice .print { width: 120px; height: 98px; padding: 6px; transform: rotate(-2.5deg); }
-.voice-label { display: flex; align-items: center; gap: 16px; }
+.voice .print { width: 112px; height: 92px; padding: 6px; transform: rotate(-2.5deg); }
+.voice-label { display: flex; align-items: center; gap: 14px; }
 .voice-mic { flex: none; width: 58px; height: 58px; border-radius: 50%; display: grid; place-items: center; background: var(--voice-mic-bg); color: var(--voice-mic-ink); }
 .voice-mic .icon { width: 32px; height: 32px; }
 .voice-text { font-size: 28px; font-weight: 700; line-height: 1.15; }
 
 /* ================= An item ================= */
-.viewer { position: absolute; top: 144px; left: var(--edge); right: var(--edge); bottom: 32px; display: grid; grid-template-columns: 104px 1fr 104px; column-gap: 24px; }
-.viewer-main { display: grid; grid-template-columns: 656px 1fr; grid-template-rows: 448px 1fr; column-gap: 30px; row-gap: 24px; min-width: 0; }
-.open-cell { display: grid; place-items: center; }
+/* the photo's cell is 656 x 532 (lib/layout.js OPEN); a portrait stands its full
+   height with the note beside it (.open-cell--pair); the buttons below never move */
+.viewer { position: absolute; top: 128px; left: var(--edge); right: var(--edge); bottom: 20px; display: grid; grid-template-columns: 104px 1fr 104px; column-gap: 24px; }
+.viewer-main { display: grid; grid-template-columns: 656px 1fr; grid-template-rows: 532px 104px; column-gap: 30px; row-gap: 16px; min-width: 0; }
+.open-cell { display: grid; place-items: center; min-height: 0; }
+.open-cell--pair { grid-column: 1 / -1; display: flex; align-items: center; justify-content: center; gap: 44px; }
+.open-cell--pair .note--open { flex: 0 1 360px; min-width: 0; align-self: center; margin-top: 0; }
 .print--open { padding: 16px; }
 .media { position: relative; }
 .video { position: absolute; inset: 0; width: 100%; height: 100%; }
 .nav-arrow {
-  align-self: start; margin-top: 124px; height: 200px;
+  align-self: start; margin-top: 140px; height: 200px;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
   border-radius: var(--r-button); background: var(--card); color: var(--ink); box-shadow: var(--shadow-card);
   font-size: 22px; font-weight: 700;
@@ -196,11 +201,11 @@ body::before {
 .note--open .note-when { margin-top: 10px; }
 .note--open .note-text { -webkit-line-clamp: 5; }
 .reactions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
-.reaction { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; border-radius: var(--r-button); background: var(--card); box-shadow: var(--shadow-card); font-size: 26px; font-weight: 700; color: var(--ink); }
-.reaction img { width: 54px; height: 54px; }
+.reaction { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; border-radius: var(--r-button); background: var(--card); box-shadow: var(--shadow-card); font-size: 26px; font-weight: 700; line-height: 1.15; color: var(--ink); }
+.reaction img { width: 50px; height: 50px; }
 .reaction:active { box-shadow: var(--shadow-press); transform: translateY(1px); }
-.send-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; border-radius: var(--r-button); background: var(--terracotta); color: var(--cream); box-shadow: var(--shadow-card); font-size: 28px; font-weight: 700; }
-.send-btn .icon { width: 46px; height: 46px; }
+.send-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; border-radius: var(--r-button); background: var(--terracotta); color: var(--cream); box-shadow: var(--shadow-card); font-size: 28px; font-weight: 700; line-height: 1.15; }
+.send-btn .icon { width: 44px; height: 44px; }
 .send-btn:active { background: var(--terracotta-press); box-shadow: var(--shadow-press); }
 .play-big { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; }
 .play-big .disc { width: 176px; height: 176px; border-radius: 50%; display: grid; place-items: center; background: var(--terracotta); color: var(--cream); box-shadow: 0 0 0 10px rgba(255, 253, 248, .92), 0 10px 30px rgba(20, 12, 6, .45); }
@@ -273,6 +278,9 @@ body::before {
 .send-all-btn { width: 340px; background: var(--terracotta); color: var(--cream); }
 .send-all-btn:active { background: var(--terracotta-press); }
 .again-btn { height: 96px; padding: 0 30px 0 24px; background: var(--card); color: var(--ink); }
+/* "Record again" wraps to its own row at the right, clear of where the Stop
+   circle was, so a double tap on Stop can't land on it. */
+.voice-controls--recorded .again-btn { margin-left: auto; }
 .again-btn .icon { width: 36px; height: 36px; }
 .sent--voice .voice-print { width: 420px; height: 340px; }
 

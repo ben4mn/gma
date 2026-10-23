@@ -13,10 +13,17 @@ design
 docs
 deploy
 pi
+web/e2e
 web/test
+web/package.json
+web/package-lock.json
 coverage
 playwright-report
 test-results
 .cache
 Dockerfile
 .dockerignore
+docker-compose.yml
+# Notes, not code. The vendored libraries' licences stay with them.
+**/*.md
+!web/vendor/**/LICENSE*
