@@ -12,6 +12,7 @@ import { newId } from '../lib/ids.js';
 import { pushConfigured, sendToUser } from '../lib/push.js';
 import { perIp } from '../lib/rate-limits.js';
 import { now } from '../lib/time.js';
+import { immediate } from '../lib/tx.js';
 
 const MAX_SUBSCRIPTIONS_PER_USER = 10;
 
@@ -94,7 +95,7 @@ export default async function pushRoutes(app, { config, db, pushSender = undefin
   app.post('/api/push/subscribe', { preHandler: requireUser }, async (request) => {
     const sub = parseSubscription(request.body);
     const userId = request.user.id;
-    db.transaction(() => {
+    immediate(db, () => {
       // A shared phone that changes hands moves its subscription to whoever signed in.
       upsert.run({
         id: newId(),
@@ -104,7 +105,7 @@ export default async function pushRoutes(app, { config, db, pushSender = undefin
         created_at: now(),
       });
       trim.run(userId, userId, MAX_SUBSCRIPTIONS_PER_USER);
-    })();
+    });
     return { ok: true };
   });
 

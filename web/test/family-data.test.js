@@ -21,10 +21,14 @@ test('recipientLabel', () => {
   assert.deepEqual(recipientLabel({ recipient: null }, me), { everyone: true, text: 'To everyone' });
   assert.equal(recipientLabel({ recipient: { id: 'u1', name: 'Sarah' } }, me).text, 'To you');
   assert.equal(recipientLabel({ recipient: { id: 'u2', name: 'Mike Lee' } }, me).text, 'To Mike');
+  assert.equal(recipientLabel({ recipient: { id: 'u3', name: 'Uncle Mike' } }, me).text, 'To Uncle Mike');
 });
 
 test('names and colours', () => {
-  assert.equal(firstName('  Aunt Carol '), 'Aunt');
+  assert.equal(firstName('  Aunt Carol '), 'Aunt Carol');
+  assert.equal(firstName('Uncle Mike Lee'), 'Uncle Mike');
+  assert.equal(firstName('Sarah Lee'), 'Sarah');
+  assert.equal(firstName(''), 'Someone');
   assert.equal(initialOf('sarah'), 'S');
   assert.equal(colourFor({ color: '#3A5236' }), '#3A5236');
   assert.equal(colourFor({ id: 'x' }), colourFor({ id: 'x' }));

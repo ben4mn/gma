@@ -98,3 +98,52 @@ export function durationWords(ms) {
   const min = Math.max(1, Math.round(s / 60));
   return min === 1 ? '1 minute' : `${min} minutes`;
 }
+
+/** "07:00" → "7 am", "06:30" → "6:30 am"; '' when it isn't a time. */
+export function hmWords(text) {
+  const minutes = parseHm(text);
+  if (minutes == null) return '';
+  const hour = Math.floor(minutes / 60);
+  const minute = minutes % 60;
+  const h12 = hour % 12 === 0 ? 12 : hour % 12;
+  return `${h12}${minute ? `:${String(minute).padStart(2, '0')}` : ''} ${hour < 12 ? 'am' : 'pm'}`;
+}
+
+/** The greeting for the hour it really is in `timeZone`: never "Good evening" at dawn. */
+export function greetingAt(ms, timeZone) {
+  const { hour } = zonedParts(ms, timeZone);
+  if (hour < 5) return 'Good night';
+  if (hour < 12) return 'Good morning';
+  if (hour < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
+/**
+ * What the frame says while the slideshow rests: the status line on an awake
+ * Home, and the resting screen's two lines. Before midnight the photos are back
+ * "in the morning"; after it, at the hour the night ends. With a clock that
+ * can't be trusted it says nothing about the time at all.
+ */
+export function nightWords(ms, settings, { trusted = true } = {}) {
+  if (!trusted) {
+    return {
+      status: 'The slideshow is resting for now.',
+      restTitle: 'Resting for now.',
+      restLine: 'Tap anywhere to see the photos.',
+    };
+  }
+  const greeting = greetingAt(ms, settings.timezone);
+  const { hour, minute } = zonedParts(ms, settings.timezone);
+  const end = parseHm(settings.night_end);
+  const backAt = end != null && hour * 60 + minute < end ? hmWords(settings.night_end) : '';
+  return {
+    status: backAt ? `${greeting}. The photos come back at ${backAt}.` : `${greeting}. The slideshow rests until morning.`,
+    restTitle: `${greeting}.`,
+    restLine: backAt ? `The photos will be back at ${backAt}.` : 'The photos will be back in the morning.',
+  };
+}
+
+/** "1 second", "12 seconds" */
+export function secondsWords(seconds) {
+  return seconds === 1 ? '1 second' : `${seconds} seconds`;
+}

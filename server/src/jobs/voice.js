@@ -7,6 +7,7 @@ import { publish } from '../lib/events.js';
 import { newId } from '../lib/ids.js';
 import { AUDIO_RENDITION } from '../lib/media.js';
 import { writeRendition } from './items.js';
+import { immediate } from '../lib/tx.js';
 
 function loadVoiceNote(db, id) {
   return db.prepare('SELECT * FROM voice_notes WHERE id = ?').get(id) ?? null;
@@ -36,7 +37,7 @@ async function notify(ctx, eventId) {
 
 // Saves the audio and creates the frame's event (once). → the new event id, or null.
 function recordReady(db, note, { audioPath, durationMs }) {
-  return db.transaction(() => {
+  return immediate(db, () => {
     const current = db.prepare('SELECT id FROM voice_notes WHERE id = ?').get(note.id);
     if (!current) return null;
     db.prepare(
@@ -56,7 +57,7 @@ function recordReady(db, note, { audioPath, durationMs }) {
     if (!inserted.changes) return null;
     publish(db, 'grandma.event', { id: eventId, kind: 'voice', voice_note_id: note.id, item_id: note.item_id ?? null });
     return eventId;
-  })();
+  });
 }
 
 export async function run(ctx, job) {

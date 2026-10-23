@@ -20,11 +20,39 @@ export function currentPlatform() {
   return detectPlatform(navigator.userAgent, { maxTouchPoints: navigator.maxTouchPoints, standalone: isStandalone() });
 }
 
+/**
+ * A "Copy link" button with the line it leads to. `url` defaults to the app's
+ * front door, which sends a signed-out browser to sign in.
+ */
+export function copyLinkButton({ browser, url = `${location.origin}/`, className = 'btn btn--secondary' }) {
+  const status = h('p', { class: 'body-text', role: 'status' });
+  const button = h('button', {
+    type: 'button',
+    class: className,
+    onclick: async () => {
+      try {
+        await navigator.clipboard.writeText(url);
+        status.textContent = `Copied. Now open ${browser} and paste it into the address bar.`;
+      } catch {
+        status.textContent = `Press and hold the address at the top, copy it, then paste it into ${browser}.`;
+      }
+    },
+  }, icon('copy'), 'Copy link');
+  return { button, status };
+}
+
 /** The Add to Home Screen steps for this phone, with Android's install button when the browser offers one. */
 export function installGuideView() {
   const guide = installGuide(currentPlatform(), { canPrompt: Boolean(deferredInstall) });
   if (guide.kind === 'installed') return h('p', { class: 'body-text' }, 'You’re using the app from your Home Screen. You’re all set.');
   const box = h('div', null, h('ol', { class: 'steps' }, guide.steps.map((s) => h('li', null, s))));
+  if (guide.copyLink) {
+    const { button, status } = copyLinkButton({ browser: guide.copyLink.browser });
+    box.append(h('div', { class: 'copy-link' },
+      h('p', { class: 'body-text body-text--muted' }, guide.copyLink.hint),
+      h('div', { class: 'row' }, button),
+      status));
+  }
   if (guide.kind === 'android-prompt') {
     box.append(h('button', {
       type: 'button',

@@ -26,6 +26,7 @@ import { httpError } from './guards.js';
 import { newId } from './ids.js';
 import { MINUTE, now } from './time.js';
 import { hmac, safeEqual } from './tokens.js';
+import { immediate } from './tx.js';
 
 export const CHALLENGE_COOKIE = 'gma_webauthn';
 export const CHALLENGE_TTL_MS = 5 * MINUTE;
@@ -102,12 +103,12 @@ export function deletePasskey(db, userId, passkeyId) {
 function saveChallenge(db, { kind, userId = null, challenge }) {
   const at = now();
   const id = newId();
-  db.transaction(() => {
+  immediate(db, () => {
     db.prepare('DELETE FROM webauthn_challenges WHERE expires_at <= ?').run(at);
     db.prepare(
       'INSERT INTO webauthn_challenges (id, user_id, challenge, kind, expires_at) VALUES (?, ?, ?, ?, ?)',
     ).run(id, userId, challenge, kind, at + CHALLENGE_TTL_MS);
-  })();
+  });
   return id;
 }
 

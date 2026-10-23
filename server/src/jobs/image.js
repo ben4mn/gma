@@ -5,7 +5,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { IMAGE_RENDITIONS, MAX_INPUT_PIXELS, heifDeclaredPixels, isHeif, orientedSize, renderStill } from '../lib/media.js';
-import { DEFAULT_PHOTO_MESSAGE, JobError, permanentError } from './errors.js';
+import { DEFAULT_PHOTO_MESSAGE, JobError, mediaIoError, permanentError } from './errors.js';
 
 const HEIF_HEAD_BYTES = 1024 * 1024;
 export const TOO_BIG_MESSAGE = "This photo is too big for us to open. Please send a smaller copy.";
@@ -52,6 +52,11 @@ export async function run(ctx, job) {
     try {
       size = await orientedSize(source);
     } catch (err) {
+      // The drive (or the file) went away: that is retried, not the photo's fault.
+      if (mediaIoError(err)) throw err;
+      await fs.access(original).catch((ioErr) => {
+        throw ioErr;
+      });
       throw unreadable(err);
     }
 
@@ -61,7 +66,7 @@ export async function run(ctx, job) {
       try {
         renditions.push(await writeRendition(storage, item.id, spec, (out) => renderStill(source, spec, out)));
       } catch (err) {
-        throw err.code === 'ENOSPC' || err.code === 'EACCES' ? err : unreadable(err);
+        throw err.code === 'ENOSPC' || err.code === 'EACCES' || mediaIoError(err) ? err : unreadable(err);
       }
     }
     await finishItem(ctx, item.id, size, renditions);

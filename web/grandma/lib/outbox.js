@@ -4,8 +4,11 @@
 import { createEntry, due, markSending, applyResult, recover, summarize, RETRY_MS } from './outbox-core.js';
 
 export function createOutbox({ store, send, now = Date.now, newId = () => crypto.randomUUID() }) {
-  let running = null; // the pass in progress
-  let queued = null;  // the one pass waiting behind it
+  // Entries being sent right now, by client_id. Each send stands alone: a voice
+  // upload stalled on bad Wi-Fi (the request times out after a while, see api.js)
+  // never holds the reactions and messages tapped after it.
+  const inFlight = new Map();
+  let recovered = false;
   let timer = null;
   let counts = { pending: 0, failed: 0 };
 
@@ -21,71 +24,58 @@ export function createOutbox({ store, send, now = Date.now, newId = () => crypto
     return entry;
   }
 
+  async function attempt(entry) {
+    try {
+      return await send(entry);
+    } catch (err) {
+      return { status: 0, error: String(err?.message ?? err) };
+    }
+  }
+
   async function sendOne(entry) {
     const sending = markSending(entry, now());
     await store.put(sending);
-    let result;
-    try {
-      result = await send(sending);
-    } catch (err) {
-      result = { status: 0, error: String(err?.message ?? err) };
-    }
-    const next = applyResult(sending, result, now());
+    const next = applyResult(sending, await attempt(sending), now());
     if (next) await store.put(next);
     else await store.delete(entry.client_id);
   }
 
   // "Seen" marks are batched into one request; everything else goes one by one.
   async function sendSeen(entries) {
-    if (!entries.length) return;
     const item_ids = [...new Set(entries.flatMap((e) => e.payload.item_ids))];
-    const merged = { ...entries[0], payload: { item_ids } };
-    const sending = markSending(merged, now());
-    let result;
-    try {
-      result = await send(sending);
-    } catch (err) {
-      result = { status: 0, error: String(err?.message ?? err) };
-    }
-    const next = applyResult(sending, result, now());
+    const sending = markSending({ ...entries[0], payload: { item_ids } }, now());
+    const next = applyResult(sending, await attempt(sending), now());
     for (const e of entries) {
       if (next) await store.put({ ...next, client_id: e.client_id, payload: e.payload });
       else await store.delete(e.client_id);
     }
   }
 
-  async function runFlush(force) {
-    const entries = await store.getAll();
-    for (const e of recover(entries)) await store.put(e);
-    const ready = due(await store.getAll(), now(), { force });
-    await sendSeen(ready.filter((e) => e.kind === 'seen'));
-    for (const entry of ready.filter((e) => e.kind !== 'seen')) await sendOne(entry);
-    await refreshCounts();
+  function track(entries, run) {
+    const p = run().catch(() => {}).finally(() => { for (const e of entries) inFlight.delete(e.client_id); });
+    for (const e of entries) inFlight.set(e.client_id, p);
+    return p;
   }
 
   /**
-   * Send what is due. One pass runs at a time; a call made during a pass queues
-   * exactly one more pass (so an entry added mid-send goes out right after) and
-   * resolves when that pass ends. A forced pass ignores the retry clock.
+   * Send what is due (everything pending when forced), oldest first. Entries
+   * already on their way are not sent twice; the promise resolves when every
+   * send it started, and every one already in flight, has had its answer.
    */
-  function flush({ force = false } = {}) {
-    if (queued) {
-      queued.force = queued.force || force;
-      return queued.promise;
+  async function flush({ force = false } = {}) {
+    if (!recovered) {
+      // after a reload, anything caught mid-send goes back to pending (the server dedupes)
+      recovered = true;
+      for (const e of recover(await store.getAll())) await store.put(e);
     }
-    if (!running) return beginPass(force);
-    const next = { force };
-    next.promise = running.catch(() => {}).then(() => {
-      queued = null;
-      return beginPass(next.force);
-    });
-    queued = next;
-    return next.promise;
-  }
-
-  function beginPass(force) {
-    running = runFlush(force).finally(() => { running = null; });
-    return running;
+    const ready = due(await store.getAll(), now(), { force });
+    const waits = new Set(inFlight.values());
+    const fresh = ready.filter((e) => !inFlight.has(e.client_id));
+    const seen = fresh.filter((e) => e.kind === 'seen');
+    if (seen.length) waits.add(track(seen, () => sendSeen(seen)));
+    for (const entry of fresh.filter((e) => e.kind !== 'seen')) waits.add(track([entry], () => sendOne(entry)));
+    await Promise.all(waits);
+    await refreshCounts();
   }
 
   function start(target = globalThis) {

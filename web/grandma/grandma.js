@@ -6,7 +6,8 @@ import { createApi } from './lib/api.js';
 import { connectLive } from './lib/live.js';
 import { createOutbox, idbStore, memoryStore } from './lib/outbox.js';
 import { slideshowItems, groupIntoCards, familyPhotoUrl, normalizeList } from './lib/cards.js';
-import { formatTime, formatDate, isNightAt, whenLabel, zonedParts, parseHm } from './lib/time.js';
+import { formatTime, formatDate, isNightAt, whenLabel, zonedParts, parseHm, nightWords } from './lib/time.js';
+import { createFrameClock, nightMode } from './lib/clock.js';
 import { shouldGoHome, shouldRest, canReload, canRedrawHome } from './lib/idle.js';
 import { icon } from './lib/dom.js';
 import { renderHome } from './screens/home.js';
@@ -21,6 +22,7 @@ const DEFAULT_SETTINGS = { night_start: '21:00', night_end: '07:00', timezone: '
 const STATE_REFRESH_MS = 5 * 60_000;
 const HEARTBEAT_MS = 60_000;
 const SEEN_KEY = 'gma-frame-seen';
+const NIGHT_KEY = 'gma-frame-night'; // the mode last decided on a trusted clock
 
 const api = createApi({ fixture: FIXTURE });
 const outbox = createOutbox({ store: FIXTURE || !('indexedDB' in globalThis) ? memoryStore() : idbStore(), send: api.send });
@@ -36,7 +38,7 @@ const els = {
 };
 
 let raw = null;            // the last state from the server (or the fixture)
-let clockOffset = 0;       // server time − this machine's time
+const clock = createFrameClock(); // trusted once the server or NTP has set it (see lib/clock.js)
 let screenName = null;
 let screen = null;
 let homeSignature = '';
@@ -70,12 +72,12 @@ function view() {
   };
 }
 
-const clockNow = () => Date.now() + clockOffset;
+const clockNow = () => clock.now();
 
 async function refresh() {
   try {
     const { state, cached } = await api.getState();
-    if (!cached && Number.isFinite(state.now) && !FIXTURE) clockOffset = state.now - Date.now();
+    if (!cached && Number.isFinite(state.now) && !FIXTURE) clock.sync(state.now);
     raw = state;
     setOffline(cached);
   } catch (err) {
@@ -151,25 +153,45 @@ function updateChrome() {
   els.root.toggleAttribute('data-resting', resting);
   let line = null;
   if (offline) line = { icon: 'offline', text: 'No internet right now. Your saved photos keep showing.' };
-  else if (night && onHome && !resting) line = { icon: 'moon', text: 'Good evening. The slideshow rests until morning.' };
+  else if (night && onHome && !resting) line = { icon: 'moon', text: nightWords(clockNow(), settings(), { trusted: clock.trusted }).status };
   els.status.hidden = !line;
-  if (line) els.status.replaceChildren(icon(line.icon), document.createTextNode(line.text));
+  // the tick calls this every second (the night line follows the hour): touch the DOM only on a change
+  const key = line ? `${line.icon}|${line.text}` : '';
+  if (line && els.status.dataset.line !== key) els.status.replaceChildren(icon(line.icon), document.createTextNode(line.text));
+  els.status.dataset.line = key;
   els.status.dataset.kind = line?.icon ?? '';
 }
 
+// A clock that can't be trusted (offline since a power cut) shows no time at
+// all: a big wrong time is worse than none.
 function tickClock() {
   const now = clockNow();
   const tz = settings().timezone;
-  const time = formatTime(now, tz);
-  const date = formatDate(now, tz);
+  const time = clock.trusted ? formatTime(now, tz) : '';
+  const date = clock.trusted ? formatDate(now, tz) : '';
   if (els.time.textContent !== time) els.time.textContent = time;
   if (els.date.textContent !== date) els.date.textContent = date;
-  rest?.setClock(time, date);
+  rest?.setClock(time, date, nightWords(now, settings(), { trusted: clock.trusted }));
+}
+
+/** Night by the clock when it can be trusted; otherwise the mode the frame last knew. */
+function decideNight(lastKnown) {
+  return nightMode({ trusted: clock.trusted, night: isNightAt(clockNow(), settings()), lastKnown });
+}
+
+function loadLastNight() {
+  try { return localStorage.getItem(NIGHT_KEY) === '1'; } catch { return false; }
+}
+
+function saveLastNight() {
+  if (!clock.trusted || FIXTURE) return;
+  try { localStorage.setItem(NIGHT_KEY, night ? '1' : '0'); } catch { /* storage full: the clock decides next time */ }
 }
 
 function setNight(value) {
   if (value === night) return;
   night = value;
+  saveLastNight();
   if (screenName === 'home') screen.setPaused?.(night);
   if (!night) setResting(false);
   updateChrome();
@@ -206,14 +228,16 @@ function setOffline(value) {
 // ---------- the one-second tick: clock, night, idle, waiting reloads ----------
 
 function tick() {
+  clock.check(); // NTP setting the Pi's clock makes it trustworthy
   tickClock();
   const now = Date.now();
-  setNight(isNightAt(clockNow(), settings()));
+  setNight(decideNight(night));
   const s = { screen: screenName, lastTouch, now, busy };
   if (shouldGoHome(s)) go('home');
   else if (homeStale && screenName === 'home') renderHomeIfChanged();
   if (shouldRest({ ...s, night, resting, screen: screenName })) setResting(true);
   if (reloadPending && (resting || canReload(s))) location.reload();
+  updateChrome(); // "Good evening" becomes "Good night" at midnight
 }
 
 // ---------- kiosk hygiene ----------
@@ -336,7 +360,7 @@ function fixtureClock() {
     const p = zonedParts(base, settings().timezone);
     target = base + (minutes - (p.hour * 60 + p.minute)) * 60_000;
   }
-  clockOffset = target - Date.now();
+  clock.pin(target - Date.now());
 }
 
 function openFixtureScreen() {
@@ -370,7 +394,8 @@ async function boot() {
     // fixture screenshots hold still: no timers move the screen
     window.__gmaFixture = { ctx, go };
   }
-  night = isNightAt(clockNow(), settings());
+  night = decideNight(loadLastNight());
+  saveLastNight();
   resting = false;
   tickClock();
   if (FIXTURE) openFixtureScreen(); else go('home');
@@ -387,6 +412,8 @@ async function boot() {
   setInterval(syncWakeLock, 60_000);
   window.addEventListener('online', () => refreshSoon(0));
   window.addEventListener('offline', () => setOffline(true));
+  // the service worker saves its photo index sparingly; leaving is a good moment
+  window.addEventListener('pagehide', () => navigator.serviceWorker?.controller?.postMessage({ type: 'gma-save-index' }));
   syncWakeLock();
   startServiceWorker();
 }

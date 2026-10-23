@@ -64,14 +64,14 @@ test('a permanent error fails at once; release puts a job back without spending 
   assert.equal(job(db, b).attempts, 0);
 });
 
-test('jobs left running for over 30 minutes are requeued', async (t) => {
+test('jobs locked for longer than any job can run (2 h) are requeued by the sweep', async (t) => {
   const ctx = await makeTestApp();
   t.after(ctx.cleanup);
   const { db } = ctx;
   const now = Date.now();
   const stale = enqueue(db, { kind: 'image', refId: 's', runAfter: 0, now: 1 });
   const fresh = enqueue(db, { kind: 'image', refId: 'f', runAfter: 0, now: 2 });
-  claim(db, { workerId: 'dead', now: now - 31 * 60_000 });
+  claim(db, { workerId: 'dead', now: now - 121 * 60_000 });
   claim(db, { workerId: 'alive', now: now - 60_000 });
   assert.equal(requeueStale(db, { now }), 1);
   assert.equal(job(db, stale).status, 'queued');

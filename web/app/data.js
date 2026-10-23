@@ -1,6 +1,7 @@
 // Pure readers for the server's JSON. They accept the shapes the contract
 // describes and a few obvious variants, so a renamed field shows up in one place.
 import { REACTIONS } from '../shared/icons.js';
+import { shortNameFor } from '../shared/names.js';
 
 /** URL of an item's rendition: the server's own URL when it sends one, else the contract's path. */
 export function renditionUrl(item, name) {
@@ -41,9 +42,9 @@ export function reactionInfo(name) {
   return REACTIONS[name] ?? null;
 }
 
-/** First name for friendly copy: "Sarah" from "Sarah Lee". */
+/** The name for friendly copy: "Sarah" from "Sarah Lee", "Uncle Mike" from "Uncle Mike Lee". */
 export function firstName(name) {
-  return String(name || '').trim().split(/\s+/)[0] || 'Someone';
+  return shortNameFor(String(name || '')) || 'Someone';
 }
 
 export function initialOf(name) {

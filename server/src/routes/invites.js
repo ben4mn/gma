@@ -1,7 +1,9 @@
 // Opening an invite link: /join/<token> asks these routes about the invite.
 //
 //   GET  /api/invites/:token          → {valid, name, email, emailed, reason}
-//   POST /api/invites/:token/accept   {name, email}
+//   POST /api/invites/:token/accept   {name, email, short_name?}
+//        short_name: what Grandma calls them ("Uncle Mike"), at most 30 letters;
+//        without it the default applies (lib/people.js defaultShortName)
 //        → {signed_in: true, user, offer_passkey}   the app emailed the invite to that address
 //        → {signed_in: false, email}                 otherwise: a code is on its way
 //
@@ -12,12 +14,15 @@
 // through their own invite) just sends them a sign-in code and leaves both them
 // and the invite alone.
 
+import { cleanName } from '../lib/admin.js';
 import { httpError } from '../lib/guards.js';
+import { MAX_SHORT_NAME_LENGTH } from '../lib/people.js';
 import { newId } from '../lib/ids.js';
 import { now } from '../lib/time.js';
 import { sha256 } from '../lib/tokens.js';
 import { readEmail, readName, sendSignInCode, signIn } from '../lib/login.js';
 import { clientIp, perIp } from '../lib/rate-limits.js';
+import { immediate } from '../lib/tx.js';
 
 const PROBLEMS = {
   unknown: [404, "We couldn't find that invite. Please check the link, or ask Ben for a new one."],
@@ -58,8 +63,8 @@ function provesEmail(invite, email) {
 // never renamed, never given another email and never claims this invite. They
 // just get a sign-in code at their own address, unless the link proves that
 // address (the app mailed this invite to it), which signs them in.
-function claimInvite(db, invite, { name, email, proven }) {
-  return db.transaction(() => {
+function claimInvite(db, invite, { name, email, proven, shortName = null }) {
+  return immediate(db, () => {
     const at = now();
     const markUsed = (userId) =>
       db.prepare('UPDATE invites SET used_at = ?, used_by = ? WHERE id = ?').run(at, userId, invite.id);
@@ -93,9 +98,11 @@ function claimInvite(db, invite, { name, email, proven }) {
       ).run(userId, name, email, invite.role, at);
       db.prepare('UPDATE invites SET created_user_id = ? WHERE id = ?').run(userId, invite.id);
     }
+    // Only ever the pending person this invite is for, never someone else's row.
+    if (shortName) db.prepare('UPDATE users SET short_name = ? WHERE id = ?').run(shortName, userId);
     markUsed(userId);
     return db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
-  })();
+  });
 }
 
 export default async function inviteRoutes(app, { db }) {
@@ -121,8 +128,12 @@ export default async function inviteRoutes(app, { db }) {
     const body = request.body ?? {};
     const name = readName(body.name ?? invite.name);
     const email = readEmail(body.email ?? invite.email);
+    const shortName =
+      body.short_name === undefined || body.short_name === null || String(body.short_name).trim() === ''
+        ? null
+        : cleanName(body.short_name, { what: 'what Grandma calls you', max: MAX_SHORT_NAME_LENGTH });
     const proven = provesEmail(invite, email);
-    const user = claimInvite(db, invite, { name, email, proven });
+    const user = claimInvite(db, invite, { name, email, proven, shortName });
 
     if (proven) {
       return { signed_in: true, ...signIn(request, reply, user) };

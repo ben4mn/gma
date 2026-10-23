@@ -10,6 +10,9 @@ export function renderRest({ item, onWake }) {
   const time = h('span', { class: 'rest-time-digits' });
   const period = h('span', { class: 'rest-time-period' });
   const date = h('p', { class: 'rest-date' });
+  const timeLine = h('p', { class: 'rest-time' }, time, period);
+  const title = document.createTextNode('Good night.');
+  const line = document.createTextNode('The photos will be back in the morning.');
   let print = null;
   if (item?.display) {
     const box = fitBox(item.width, item.height, REST_BOX.width, REST_BOX.height);
@@ -18,19 +21,25 @@ export function renderRest({ item, onWake }) {
   }
   const el = h('div', { class: 'rest', role: 'button', 'aria-label': 'Wake the screen' },
     h('div', { class: 'rest-clock' },
-      h('p', { class: 'rest-time' }, time, period),
+      timeLine,
       date,
-      h('p', { class: 'rest-line' }, 'Good night.', h('br'), 'The photos will be back in the morning.')),
+      h('p', { class: 'rest-line' }, title, h('br'), line)),
     print);
   el.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); onWake(); });
   return {
     el,
-    /** clock: "9:30 pm" */
-    setClock(clock, dateText) {
-      const [digits, ampm] = clock.split(' ');
+    /** clock: "9:30 pm", or '' when the frame's clock can't be trusted; words: lib/time.js nightWords */
+    setClock(clock, dateText, words) {
+      const [digits = '', ampm = ''] = clock ? clock.split(' ') : [];
       time.textContent = digits;
       period.textContent = ampm;
       date.textContent = dateText;
+      timeLine.hidden = !digits; // no time at all rather than a wrong one
+      date.hidden = !dateText;
+      if (words) {
+        title.textContent = words.restTitle;
+        line.textContent = words.restLine;
+      }
     },
   };
 }

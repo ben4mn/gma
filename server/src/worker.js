@@ -7,8 +7,9 @@
 // (GET /healthz reports it) and stops cleanly on SIGTERM.
 
 import fs from 'node:fs';
+import path from 'node:path';
 import { loadConfig } from './config.js';
-import { openDb } from './db/index.js';
+import { openDb, snapshotBeforeMigrations } from './db/index.js';
 import { setSetting } from './lib/settings.js';
 import { assertMediaMounted, createStorage } from './lib/storage.js';
 
@@ -56,6 +57,14 @@ try {
   log.error(err.message);
   process.exit(err.code === 'media_not_mounted' ? 78 : 1);
 }
+// An upgrade with new migrations copies the database onto the drive first (OPS-11).
+try {
+  const copy = await snapshotBeforeMigrations({ dbPath: config.dbPath, backupsDir: storage.backupsDir });
+  if (copy) log.info(`Saved a copy of the database before upgrading it: ${copy}`);
+} catch (err) {
+  log.error(`Could not copy the database before upgrading it, so it was left as it is: ${err.message}`);
+  process.exit(1);
+}
 const db = openDb(config.dbPath);
 
 const beat = () => {
@@ -88,5 +97,10 @@ async function shutdown(signal) {
     process.exit(1);
   }
 }
+// A stray rejection is logged, never left to kill the worker mid-job (the job
+// would stay 'running' until the next start reclaims it).
+process.on('unhandledRejection', (reason) => {
+  log.error('Unhandled rejection:', reason instanceof Error ? reason.stack : reason);
+});
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));

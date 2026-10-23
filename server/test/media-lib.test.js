@@ -53,7 +53,8 @@ test('the ffmpeg argument lists match the contract', () => {
   // One video must not take every core: decoder, filters and encoder are capped.
   assert.ok(joined.startsWith('-hide_banner -nostdin -loglevel error -y -filter_threads 2 -threads 2 -i in.mov'), joined);
   assert.ok(buildPosterArgs({ input: 'a', output: 'b', durationMs: 5000 }).join(' ').includes('-filter_threads 2 -threads 2'));
-  assert.match(buildVideoArgs({ input: 'a', output: 'b', hdr: true }).join(' '), /-vf zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,scale/);
+  // OPS-1: HDR is scaled to 720p first, so the float tone map works on 720p frames, not 4K ones.
+  assert.match(buildVideoArgs({ input: 'a', output: 'b', hdr: true }).join(' '), /-vf scale=w=[^ ]*,zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p /);
 
   assert.ok(buildVoiceArgs({ input: 'a.webm', output: 'b' }).join(' ').includes('-vn -t 65 -map_metadata -1 -ac 1 -c:a aac -b:a 64k -movflags +faststart -f mp4 b'));
   assert.deepEqual([posterSeconds(500), posterSeconds(1000), posterSeconds(null)], [0, 1, 1]);
@@ -165,18 +166,26 @@ test('ffmpeg: renditions are 720 on the short side, never upscaled', { skip: !(B
   }
 });
 
+// tiny.heic is a real 445-byte HEVC HEIC made by heif-enc in the CI's fixtures
+// step (deploy/ci/make-fixtures.sh). sharp's prebuilt libvips can't encode HEVC,
+// so the test can't make one itself; with the file committed it always runs
+// wherever heif-dec is installed (the Docker image), and never skips there.
+const TINY_HEIC = new URL('./fixtures/tiny.heic', import.meta.url);
+
 test('heif-dec: decodes a HEIC to PNG', { skip: !BIN.heifDec && 'heif-dec not installed here; runs in the Docker image' }, async (t) => {
   const sharp = (await import('sharp')).default;
   const dir = await makeTempDir();
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const heic = path.join(dir, 'in.heic');
-  try {
-    await sharp(await makePng()).heif({ compression: 'hevc' }).toFile(heic);
-  } catch {
-    t.skip('this sharp build cannot encode HEVC to make a fixture');
-    return;
-  }
+  await fs.copyFile(TINY_HEIC, heic);
   const out = path.join(dir, 'out.png');
   await createMediaTools().heifToPng({ input: heic, output: out });
   assert.equal(detectType(await fs.readFile(out)).mime, 'image/png');
+  const meta = await sharp(out).metadata();
+  assert.ok(meta.width > 0 && meta.height > 0, 'the decoded PNG has a size');
+});
+
+test('the committed HEIC fixture is a real HEIF file', async () => {
+  const bytes = await fs.readFile(TINY_HEIC);
+  assert.equal(detectType(bytes).mime, 'image/heic');
 });

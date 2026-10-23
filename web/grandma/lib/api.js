@@ -1,7 +1,19 @@
 // The frame's only door to the server. In fixture mode (?fixture=1) it reads
 // fixtures/state.json and pretends every send worked, so screenshots need no server.
 
-export function createApi({ fixture = false, base = '' } = {}) {
+// How long a request may go unanswered before it counts as "no answer" (status 0,
+// which the outbox retries): on half-dead Wi-Fi a request can otherwise hang
+// until TCP gives up, many minutes later.
+export const REQUEST_TIMEOUTS = Object.freeze({ json: 20_000, voice: 120_000 });
+
+function timeoutSignal(ms) {
+  if (typeof AbortSignal.timeout === 'function') return AbortSignal.timeout(ms);
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(new DOMException('The operation timed out.', 'TimeoutError')), ms);
+  return controller.signal;
+}
+
+export function createApi({ fixture = false, base = '', timeouts = REQUEST_TIMEOUTS } = {}) {
   async function getState() {
     if (fixture) {
       const res = await fetch(new URL('../fixtures/state.json', import.meta.url));
@@ -20,6 +32,7 @@ export function createApi({ fixture = false, base = '' } = {}) {
       const res = await fetch(`${base}${path}`, {
         method: 'POST',
         credentials: 'same-origin',
+        signal: timeoutSignal(isForm ? timeouts.voice : timeouts.json),
         headers: isForm ? undefined : { 'Content-Type': 'application/json' },
         body: isForm ? body : JSON.stringify(body),
       });

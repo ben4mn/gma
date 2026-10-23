@@ -2,7 +2,7 @@
 // message" (→ eight presets), Previous/Next, and a warm "Sent to Sarah" that
 // returns by itself. A video plays only on a tap, in a <video> made for that tap.
 import { h, photo, icon } from '../lib/dom.js';
-import { openLayout } from '../lib/layout.js';
+import { openLayout, sentLayout } from '../lib/layout.js';
 import { REACTIONS, sentLine } from '../lib/cards.js';
 import { durationWords } from '../lib/time.js';
 
@@ -146,13 +146,18 @@ export function renderItem(ctx, params) {
   // ----- sent: warm, brief, and back by itself -----
   function sentScreen({ reaction, preset }) {
     const it = item();
+    const box = sentLayout(it);
     const back = () => { clearTimeout(sentTimer); show(viewScreen()); };
     sentTimer = setTimeout(back, SENT_MS);
     const tucked = reaction
       ? h('span', { class: 'sent-badge' }, h('img', { src: emoji(reaction.emoji), alt: '' }), h('span', {}, reaction.label))
       : h('span', { class: 'sent-note' }, preset.text);
     return h('div', { class: 'sent', role: 'status', 'aria-live': 'polite' },
-      h('figure', { class: 'print sent-print' }, photo(it.kind === 'video' ? it.poster : it.display), tucked),
+      h('figure', { class: 'print sent-print' },
+        // sized to the photo's own shape, so a portrait is shown whole, never cropped
+        h('div', { class: 'print-photo', style: { width: `${box.width}px`, height: `${box.height}px` } },
+          photo(it.kind === 'video' ? it.poster : it.display)),
+        tucked),
       h('div', { class: 'sent-words' },
         h('p', { class: 'sent-check' }, icon('check'), 'Done'),
         h('p', { class: 'sent-title' }, `Sent to ${it.senderName}`),

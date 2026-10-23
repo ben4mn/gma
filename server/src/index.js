@@ -1,7 +1,9 @@
 // Starts the web app: node src/index.js
 
+import path from 'node:path';
 import { buildApp } from './app.js';
 import { loadConfig } from './config.js';
+import { snapshotBeforeMigrations } from './db/index.js';
 import { assertMediaMounted, MediaNotMountedError } from './lib/storage.js';
 
 let config;
@@ -12,6 +14,15 @@ try {
 } catch (err) {
   console.error(`gma: ${err.message}`);
   process.exit(78); // EX_CONFIG
+}
+
+// An upgrade with new migrations copies the database onto the drive first (OPS-11).
+try {
+  const copy = await snapshotBeforeMigrations({ dbPath: config.dbPath, backupsDir: path.join(config.mediaDir, 'backups') });
+  if (copy) console.log(`gma: saved a copy of the database before upgrading it: ${copy}`);
+} catch (err) {
+  console.error(`gma: could not copy the database before upgrading it, so it was left as it is: ${err.message}`);
+  process.exit(1);
 }
 
 let app;

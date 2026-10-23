@@ -191,7 +191,7 @@ describe('app', () => {
 
   test('/healthz reports the database and the worker heartbeat', async () => {
     const before = await t.app.inject({ url: '/healthz' });
-    assert.deepEqual(before.json(), { ok: true, db: true, worker_last_seen: null });
+    assert.deepEqual(before.json(), { ok: true, db: true, media: true, worker_last_seen: null });
     assert.equal(before.headers['cache-control'], 'no-store');
     setSetting(t.db, 'worker_last_seen', 1_792_627_200_000);
     const after = await t.app.inject({ url: '/healthz' });

@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { publish } from '../lib/events.js';
 import { JobError } from './errors.js';
+import { immediate } from '../lib/tx.js';
 
 export function loadItem(db, id) {
   return db.prepare('SELECT * FROM items WHERE id = ?').get(id) ?? null;
@@ -55,7 +56,7 @@ export async function writeRendition(storage, ownerId, spec, produce) {
 // item deleted while it was processing gets its new files removed again.
 export async function finishItem({ db, storage, log }, itemId, { width, height, durationMs = null }, renditions) {
   const now = Date.now();
-  const outcome = db.transaction(() => {
+  const outcome = immediate(db, () => {
     const item = db.prepare('SELECT id, user_id, kind, batch_id, status, ready_at FROM items WHERE id = ?').get(itemId);
     if (!item) return { gone: true };
     const upsert = db.prepare(
@@ -74,7 +75,7 @@ export async function finishItem({ db, storage, log }, itemId, { width, height, 
       publish(db, 'item.ready', { item_id: itemId, user_id: item.user_id, kind: item.kind, batch_id: item.batch_id });
     }
     return { goesLive };
-  })();
+  });
 
   if (outcome.gone) {
     log?.info?.(`Item ${itemId} was deleted while it was being processed; removing its renditions`);
@@ -88,9 +89,9 @@ export async function finishItem({ db, storage, log }, itemId, { width, height, 
 export function markItemFailed({ db }, itemId, message) {
   const item = db.prepare('SELECT id, user_id, status FROM items WHERE id = ?').get(itemId);
   if (!item || item.status !== 'processing') return false;
-  db.transaction(() => {
+  immediate(db, () => {
     db.prepare("UPDATE items SET status = 'failed', error = ? WHERE id = ?").run(message, itemId);
     publish(db, 'item.failed', { item_id: itemId, error: message }, `user:${item.user_id}`);
-  })();
+  });
   return true;
 }

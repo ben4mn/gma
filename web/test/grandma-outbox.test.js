@@ -125,3 +125,37 @@ test('something added during a flush is sent straight after it', async () => {
   assert.deepEqual(sent, ['c1', 'c2']);
   assert.deepEqual(await store.getAll(), []);
 });
+
+test('a stalled voice upload never holds the reactions tapped after it (OPS-12)', { timeout: 5000 }, async () => {
+  const store = memoryStore();
+  const sent = [];
+  let n = 0;
+  let releaseVoice;
+  const voiceGate = new Promise((r) => { releaseVoice = r; });
+  const outbox = createOutbox({
+    store,
+    newId: () => `c${++n}`,
+    send: async (e) => {
+      sent.push(e.kind);
+      if (e.kind === 'voice') { await voiceGate; return { status: 0, error: 'The operation timed out.' }; }
+      return { status: 200 };
+    },
+  });
+  await outbox.add('voice', { audio: 'blob' }); // c1: stalls on half-dead Wi-Fi
+  await new Promise((r) => setTimeout(r, 5));
+  await outbox.add('react', { item_id: 'i1', reaction: 'love' }); // c2
+  await outbox.add('preset', { item_id: 'i1', preset_id: 'p1', preset_text: 'Love you' }); // c3
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(sent, ['voice', 'react', 'preset']);
+  assert.deepEqual((await store.getAll()).map((e) => e.client_id), ['c1'], 'the reaction and the message are already through');
+
+  // a forced pass while the voice note is still on its way doesn't send it twice
+  const pass = outbox.flush({ force: true });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.deepEqual(sent, ['voice', 'react', 'preset']);
+  releaseVoice();
+  await pass;
+  const [voice] = await store.getAll();
+  assert.equal(voice.status, 'pending', 'a timeout is a retry');
+  assert.equal(voice.last_error, 'The operation timed out.');
+});

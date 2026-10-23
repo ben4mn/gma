@@ -1,6 +1,7 @@
 // Home: the slideshow print (left, as large as the screen allows, standing at the
-// top of its area so no empty band sits above it), "New for you" (right), and
-// "Message to the whole family" below it.
+// top of its area so no empty band sits above it; a panorama, too short to fill
+// it, stands in the middle instead), "New for you" (right), and "Message to the
+// whole family" below it.
 import { h, photo, icon } from '../lib/dom.js';
 import { heroLayout, HERO, HERO_AREA } from '../lib/layout.js';
 import { cardTitle, cardDetail } from '../lib/cards.js';
@@ -33,7 +34,8 @@ export function slideFor(item, ctx, area = HERO_AREA) {
       item.caption && h('span', { class: 'note-rule', 'aria-hidden': 'true' }),
       item.caption && h('p', { class: 'note-text' }, item.caption)));
   }
-  return { el: h('div', { class: `slide slide--${layout.mode}` }, children), img };
+  const cls = `slide slide--${layout.mode}${layout.centered ? ' slide--centered' : ''}`;
+  return { el: h('div', { class: cls }, children), img };
 }
 
 function cardArt(card) {

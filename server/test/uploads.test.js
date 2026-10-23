@@ -257,3 +257,35 @@ test('a signed-out body is refused before it is read, and only tus bodies are ta
   const created = await create(ctx.app, cookie, { length: 10, headers: { 'content-type': 'application/json' } });
   assert.equal(created.statusCode, 201, created.body);
 });
+
+test('a lost final response never makes a duplicate: the retry HEAD (or PATCH) answers finished with the same item (OPS-6)', async (t) => {
+  const ctx = await makeTestApp();
+  t.after(ctx.cleanup);
+  const user = makeUser(ctx.db);
+  const cookie = loginAs(ctx.app, ctx.db, user);
+  const photo = await makeJpeg();
+  const created = await create(ctx.app, cookie, { length: photo.length });
+  const last = await patch(ctx.app, cookie, created.headers.location, photo);
+  assert.equal(last.statusCode, 204, last.body);
+  const itemId = last.headers['x-item-id'];
+  // The phone never saw that response; tus-js-client asks where it stands.
+  const head = await ctx.app.inject({ method: 'HEAD', url: created.headers.location, headers: { cookie, ...TUS } });
+  assert.equal(head.statusCode, 200);
+  assert.equal(head.headers['upload-offset'], String(photo.length));
+  assert.equal(head.headers['upload-length'], String(photo.length));
+  assert.equal(head.headers['x-item-id'], itemId);
+  assert.equal(head.headers['cache-control'], 'no-store');
+  // A re-sent last chunk is answered the same way, without a second item.
+  const again = await patch(ctx.app, cookie, created.headers.location, photo);
+  assert.equal(again.statusCode, 204);
+  assert.equal(again.headers['upload-offset'], String(photo.length));
+  assert.equal(again.headers['x-item-id'], itemId);
+  assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM items WHERE user_id = ?').get(user.id).n, 1);
+  // Nobody else learns anything about it.
+  const other = loginAs(ctx.app, ctx.db, makeUser(ctx.db));
+  const theirs = await ctx.app.inject({ method: 'HEAD', url: created.headers.location, headers: { cookie: other, ...TUS } });
+  assert.equal(theirs.statusCode, 404);
+  // After a day the record goes (the hourly sweep).
+  const { sweepFinishedUploads } = await import('../src/routes/uploads.js');
+  assert.equal(sweepFinishedUploads(ctx.db, { now: Date.now() + 25 * 60 * 60 * 1000 }), 1);
+});

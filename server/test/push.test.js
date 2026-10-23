@@ -274,9 +274,9 @@ describe('sendToUser / sendToAll bookkeeping', () => {
     assert.ok(row(fine.id));
   });
 
-  test('other failures count up, and the fifth in a row drops it', async () => {
+  test('other push-service refusals (4xx) count up, and the fifth in a row drops it', async () => {
     const flaky = addSubscription(t.db, user);
-    const push = recordingSender(new Map([[flaky.endpoint, 500]]));
+    const push = recordingSender(new Map([[flaky.endpoint, 403]]));
     for (let i = 1; i < MAX_FAILURES; i++) {
       await sendToUser(t.db, t.config, user.id, payload, { sender: push.sender });
       assert.equal(row(flaky.id).failures, i);
@@ -286,14 +286,26 @@ describe('sendToUser / sendToAll bookkeeping', () => {
     assert.equal(row(flaky.id), undefined);
   });
 
-  test('a network error (no status) counts as a failure, never a crash', async () => {
-    const sub = addSubscription(t.db, user);
+  test('a network error (no status) is a failure, never a crash, and never counts toward the drop (OPS-9)', async () => {
+    const sub = addSubscription(t.db, user, { failures: MAX_FAILURES - 1 });
     const sender = async () => {
       throw new Error('getaddrinfo ENOTFOUND');
     };
     const result = await sendToAll(t.db, t.config, payload, { sender });
     assert.equal(result.failed, 1);
-    assert.equal(row(sub.id).failures, 1);
+    assert.equal(result.removed, 0);
+    assert.equal(row(sub.id).failures, MAX_FAILURES - 1);
+  });
+
+  test('a push service that is down (5xx) or busy (429, 408) never counts toward the drop (OPS-9)', async () => {
+    for (const status of [500, 502, 503, 429, 408]) {
+      const sub = addSubscription(t.db, user, { failures: MAX_FAILURES - 1 });
+      const push = recordingSender(new Map([[sub.endpoint, status]]));
+      const result = await sendToUser(t.db, t.config, user.id, payload, { sender: push.sender });
+      assert.equal(result.removed, 0, `status ${status}`);
+      assert.equal(row(sub.id).failures, MAX_FAILURES - 1, `status ${status}`);
+      t.db.prepare('DELETE FROM push_subscriptions WHERE id = ?').run(sub.id);
+    }
   });
 
   test('without VAPID keys nothing is sent', async () => {

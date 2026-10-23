@@ -30,8 +30,22 @@ function apiAnswer(path, signedIn) {
   if (path === '/api/grandma-events') return [200, { events, next_before: null }];
   if (path === '/api/me/passkeys') return [200, { passkeys: [{ id: 'pk1', label: 'iPhone', created_at: NOW }] }];
   if (path === '/api/invites/tok') return [200, { valid: true, name: 'Sarah', email: 'sarah@example.com' }];
-  if (path === '/api/admin/people') return [200, { people: [user], invites: [] }];
-  if (path === '/api/admin/health') return [200, { queue_depth: 0, failed_jobs: 0 }];
+  if (path === '/api/invites/used-tok') return [200, { valid: false, name: null, email: null, emailed: false, reason: 'used' }];
+  if (path === '/api/invites/gone-tok') return [200, { valid: false, name: null, email: null, emailed: false, reason: 'revoked' }];
+  if (path === '/api/invites/old-tok') return [200, { valid: false, name: null, email: null, emailed: false, reason: 'expired' }];
+  if (path === '/api/admin/people') return [200, { people: [user, { id: 'u9', name: 'Priya Shah', short_name: 'Priya', email: 'priya@example.com', role: 'member', status: 'pending' }], invites: [
+    { id: 'inv1', name: 'Uncle Mike', email: 'mike@example.com', role: 'member', sent_at: null, expires_at: NOW + 86_400_000, used_at: null, revoked_at: null, created_at: NOW },
+    { id: 'inv2', name: 'Priya Shah', email: 'priya@example.com', role: 'member', sent_at: NOW, expires_at: NOW + 86_400_000, used_at: NOW - 60_000, revoked_at: null, created_at: NOW },
+  ] }];
+  if (path === '/api/admin/health') {
+    return [200, {
+      queue_depth: 0, running: 0, failed_jobs: 1,
+      recent_failures: [{ id: 'j1', kind: 'video', ref_id: 'i9', attempts: 3, error: 'The video is longer than 3 minutes.', updated_at: NOW - 3_600_000 }],
+      disk_free_bytes: 800 * 1024 ** 3, disk_total_bytes: 4000 * 1024 ** 3,
+      frame_last_seen: NOW - 120_000, frames: [{ id: 'd1' }], worker_last_seen: NOW - 5000,
+      last_snapshot_at: NOW - 6 * 3_600_000, last_snapshot: { bytes: 2 * 1024 ** 2 },
+    }];
+  }
   if (path === '/api/admin/devices') return [200, { devices: [{ id: 'd1', name: 'Grandma’s frame', last_seen_at: NOW - 120_000 }] }];
   if (path === '/api/admin/presets') return [200, { presets: [{ id: 'p1', text: 'Love you', sort: 0, active: 1 }] }];
   if (path === '/api/admin/settings') return [200, { night_start: '21:00', night_end: '07:00', timezone: 'America/Chicago' }];
@@ -41,6 +55,7 @@ function apiAnswer(path, signedIn) {
 }
 
 const patches = []; // PATCH bodies the admin screens sent
+const sent = []; // POST and DELETE requests the screens sent: { method, path, body }
 
 let server;
 let origin;
@@ -59,6 +74,13 @@ before(async () => {
       patches.push({ path: url.pathname, body });
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ user: { ...user, short_name: body.short_name } }));
+    }
+    if (url.pathname === '/api/invites/tok/accept' || (req.method === 'DELETE' && url.pathname.startsWith('/api/admin/invites/'))) {
+      let raw = '';
+      for await (const chunk of req) raw += chunk;
+      sent.push({ method: req.method, path: url.pathname, body: raw ? JSON.parse(raw) : null });
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify(req.method === 'DELETE' ? { invite: { id: 'inv2', revoked_at: NOW } } : { signed_in: true, user, offer_passkey: false }));
     }
     if (url.pathname.startsWith('/api/')) {
       const [status, body] = apiAnswer(url.pathname, req.headers.cookie?.includes('signed=1'));
@@ -107,6 +129,7 @@ const screens = [
   ['/admin/messages', 'Messages Grandma can send'],
   ['/admin/night', 'Save night hours'],
   ['/admin/uploads', 'The fjord'],
+  ['/admin/health', 'Nightly backup'],
 ];
 
 for (const [path, expect] of screens) {
@@ -131,7 +154,7 @@ test('admin: Ben changes what Grandma calls someone', async (t) => {
   const errors = [];
   page.on('pageerror', (err) => errors.push(err.message));
   await page.goto(`${origin}/admin/people`);
-  await page.getByText('Grandma calls them').waitFor({ timeout: 5000 });
+  await page.getByText('Grandma calls them').first().waitFor({ timeout: 5000 });
   assert.equal(await page.locator('.grandma-name b').first().textContent(), 'Sarah'); // the first word, until Ben chooses
   await page.getByRole('button', { name: 'Change what Grandma calls Sarah Lee' }).click();
   await page.getByLabel('What Grandma calls them').fill('  Sally  ');
@@ -140,4 +163,79 @@ test('admin: Ben changes what Grandma calls someone', async (t) => {
   await context.close();
   assert.deepEqual(patches.at(-1), { path: '/api/admin/people/u1', body: { short_name: 'Sally' } });
   assert.deepEqual(errors, []);
+});
+
+test('join: a used, cancelled or expired invite each says what happened (F15)', async (t) => {
+  if (!browser) return t.skip('Playwright headless shell not installed');
+  await visit('/join/used-tok', { signedIn: false, expect: 'You’ve already joined' });
+  await visit('/join/gone-tok', { signedIn: false, expect: 'This invite was cancelled' });
+  await visit('/join/old-tok', { signedIn: false, expect: 'This invite has expired' });
+});
+
+const IPHONE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1';
+
+test('join: Grandma’s name follows the name with family words kept, is sent with the accept, then Copy link on the install step (F7, F10)', async (t) => {
+  if (!browser) return t.skip('Playwright headless shell not installed');
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block', userAgent: IPHONE_UA, hasTouch: true, isMobile: true });
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (err) => errors.push(err.message));
+  await page.goto(`${origin}/join/tok`);
+  const short = page.getByLabel('What does Grandma call you?');
+  await short.waitFor({ timeout: 5000 });
+  assert.equal(await short.inputValue(), 'Sarah'); // from the invite's name
+  await page.getByLabel('Your name').fill('Uncle Mike Lee');
+  assert.equal(await short.inputValue(), 'Uncle Mike');
+  await page.getByLabel('Your email').fill('mike@example.com');
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('heading', { name: 'Put Grandma’s family on your Home Screen' }).waitFor({ timeout: 5000 });
+  assert.deepEqual(sent.find((r) => r.path === '/api/invites/tok/accept')?.body, { name: 'Uncle Mike Lee', email: 'mike@example.com', short_name: 'Uncle Mike' });
+  await page.getByRole('button', { name: 'Copy link' }).click();
+  await page.getByText('Copied. Now open Safari').or(page.getByText('paste it into Safari')).first().waitFor({ timeout: 5000 });
+  await context.close();
+  assert.deepEqual(errors, []);
+});
+
+test('join: a name they choose themselves is kept when the full name changes', async (t) => {
+  if (!browser) return t.skip('Playwright headless shell not installed');
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
+  const page = await context.newPage();
+  await page.goto(`${origin}/join/tok`);
+  const short = page.getByLabel('What does Grandma call you?');
+  await short.fill('Mikey');
+  await page.getByLabel('Your name').fill('Michael Lee');
+  assert.equal(await short.inputValue(), 'Mikey');
+  await context.close();
+});
+
+test('admin: an opened invite whose person hasn’t finished can be cancelled', async (t) => {
+  if (!browser) return t.skip('Playwright headless shell not installed');
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
+  await context.addCookies([{ name: 'signed', value: '1', url: origin }]);
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (err) => errors.push(err.message));
+  await page.goto(`${origin}/admin/people`);
+  await page.getByText('opened it, hasn’t finished signing in').waitFor({ timeout: 5000 });
+  const opened = page.locator('.card-row', { hasText: 'priya@example.com' }).first();
+  await opened.getByRole('button', { name: 'Cancel invite' }).click();
+  await opened.getByRole('button', { name: 'Tap again to cancel' }).click();
+  await page.waitForFunction(() => true);
+  for (let i = 0; i < 50 && !sent.some((r) => r.method === 'DELETE'); i++) await new Promise((r) => setTimeout(r, 100));
+  assert.deepEqual(sent.find((r) => r.method === 'DELETE')?.path, '/api/admin/invites/inv2');
+  await context.close();
+  assert.deepEqual(errors, []);
+});
+
+test('admin: the health card names the failed job and the backup', async (t) => {
+  if (!browser) return t.skip('Playwright headless shell not installed');
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
+  await context.addCookies([{ name: 'signed', value: '1', url: origin }]);
+  const page = await context.newPage();
+  await page.goto(`${origin}/admin/health`);
+  await page.getByText('One thing needs a look. The rest is fine.').waitFor({ timeout: 5000 });
+  assert.match(await page.locator('[data-health="failed"]').textContent(), /1 couldn’t be processed.*A video, 1 hour ago: The video is longer than 3 minutes\./);
+  assert.match(await page.locator('[data-health="backup"]').textContent(), /\(2 MB\)/);
+  await context.close();
 });

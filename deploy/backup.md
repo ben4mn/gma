@@ -56,6 +56,25 @@ When Ben sets up the cloud backup, it should include `/mnt/seagate/gma/media/`
 can be skipped), and it is worth checking once that a restored snapshot opens
 (below).
 
+## The copy taken before an upgrade
+
+When a new version brings database migrations, the app and the worker first copy the database with SQLite's backup API to `/mnt/seagate/gma/media/backups/pre-<migration>-<UTC time>.sqlite` (one per migration), then upgrade it. These are never pruned. If an upgrade turns out wrong, restore that file the same way as a nightly snapshot below, and roll back the code: nothing written since the deploy is lost.
+
+## If the photo drive drops while gma is running
+
+If the Seagate drive resets or is unplugged, its `.gma-media` file disappears from the containers' view. Then:
+
+- `GET /healthz` answers 503 with `"media": false`, the worker's health check fails, and `docker compose ps` shows both as unhealthy. `/admin` health shows `media_mounted: false`.
+- The worker stops taking jobs (it logs once) and nothing is marked failed; uploads and Grandma's voice notes are refused with a 500, which the phones and the frame retry.
+
+Once the drive is mounted again on the host, recreate the containers so they see the new mount (a container keeps the dead one):
+
+```sh
+cd /home/ben/gma && docker compose down && docker compose up -d
+```
+
+The waiting jobs then carry on by themselves.
+
 ## Restoring the database from a snapshot
 
 Use this when the database on the SSD is lost or damaged, or to go back to a

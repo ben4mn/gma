@@ -123,11 +123,19 @@ function sampleVoiceArgs(seconds) {
   return ['-f', 'lavfi', '-i', `sine=frequency=330:duration=${seconds}`, '-ac', '1', '-c:a', 'aac', '-b:a', '64k'];
 }
 
+// The temp file an original is made in, next to its final place. It ends in
+// the real extension (<id>.mp4.tmp-<hex>.mp4), because ffmpeg picks its output
+// format from the name: a bare ".tmp-<hex>" made every sample video and voice
+// message fail.
+export function tempOriginalPath(storage, key, ext) {
+  return `${storage.tempPathFor(key)}.${ext}`;
+}
+
 // Copies or generates one original into storage and returns its row fields.
 async function placeOriginal(storage, { id, ext, createdAt, from = null, make = null }) {
   const key = storage.originalKey(id, ext, createdAt);
   const final = await storage.ensureDirFor(key);
-  const temp = storage.tempPathFor(key);
+  const temp = tempOriginalPath(storage, key, ext);
   try {
     if (from) await fs.copyFile(from, temp);
     else await make(temp);

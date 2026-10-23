@@ -78,3 +78,23 @@ test('night: an awake Home rests again; reloads wait for Home and quiet', () => 
   assert.equal(canRedrawHome({ screen: 'item', lastTouch: 0, now: HOME_SETTLE_MS, busy: false }), false);
   assert.equal(canReload({ screen: 'home', lastTouch: 0, now: 1000, busy: false }), false);
 });
+
+test('a panorama stands in the middle of Home’s photo area; ordinary photos keep to the top', async () => {
+  const pano = heroLayout({ width: 1600, height: 589 }, HERO_AREA); // the demo's p174.jpg, 2.7:1
+  assert.equal(pano.mode, 'landscape');
+  assert.equal(pano.centered, true);
+  assert.equal(heroLayout({ width: 1600, height: 1067 }, HERO_AREA).centered, false); // 3:2 nearly fills it
+  assert.equal(heroLayout({ width: 4032, height: 3024 }, HERO_AREA).centered, false);
+  assert.equal(heroLayout({ width: 3024, height: 4032 }, HERO_AREA).centered, false); // portraits stand full height
+});
+
+test('the Sent print keeps the photo’s own shape, so a portrait is never cropped', async () => {
+  const { sentLayout, SENT } = await import('../grandma/lib/layout.js');
+  for (const [w, h] of [[3024, 4032], [1000, 1500], [4032, 3024], [1600, 589], [800, 800]]) {
+    const box = sentLayout({ width: w, height: h });
+    assert.ok(box.width <= SENT.width && box.height <= SENT.height, `${w}x${h}`);
+    assert.ok(Math.abs(box.width / box.height - w / h) < 0.02, `${w}x${h}: ${box.width}x${box.height} keeps its shape`);
+  }
+  // a phone portrait uses the full height
+  assert.equal(sentLayout({ width: 3024, height: 4032 }).height, SENT.height);
+});

@@ -9,6 +9,7 @@ import { shortNameOf } from './people.js';
 import { createSession, destroySession, readSessionToken, SESSION_MAX_AGE_SECONDS, setSessionCookie } from './sessions.js';
 import { DAY, HOUR, MINUTE, now } from './time.js';
 import { hmac, randomDigits, randomToken, sha256 } from './tokens.js';
+import { immediate } from './tx.js';
 
 export { clientIp } from './rate-limits.js';
 
@@ -86,7 +87,7 @@ export async function sendSignInCode(app, user, { ip = null } = {}) {
   const code = randomDigits(6);
   const linkToken = randomToken(32);
 
-  const allowed = db.transaction(() => {
+  const allowed = immediate(db, () => {
     const recent = db
       .prepare('SELECT COUNT(*) AS n FROM login_codes WHERE user_id = ? AND created_at > ?')
       .get(user.id, at - HOUR).n;
@@ -98,7 +99,7 @@ export async function sendSignInCode(app, user, { ip = null } = {}) {
        VALUES (?, ?, ?, ?, ?, 0, NULL, ?, ?)`,
     ).run(id, user.id, codeHash(config, id, code), sha256(linkToken), at + CODE_TTL_MS, at, ip);
     return true;
-  })();
+  });
   if (!allowed) return { sent: false };
 
   const message = signInCodeEmail({
@@ -180,14 +181,14 @@ export function markDeviceHasPasskey(reply) {
 export function signIn(request, reply, user, { viaPasskey = false } = {}) {
   const { db } = request.server;
   const at = now();
-  const session = db.transaction(() => {
+  const session = immediate(db, () => {
     destroySession(db, readSessionToken(request));
     db.prepare("UPDATE users SET status = 'active', activated_at = ? WHERE id = ? AND status = 'pending'").run(
       at,
       user.id,
     );
     return createSession(db, { kind: 'user', userId: user.id, userAgent: request.headers['user-agent'] });
-  })();
+  });
   setSessionCookie(reply, session.token);
   reply.header('cache-control', 'no-store');
 

@@ -125,7 +125,7 @@ body::before {
 .note-text { font-family: var(--font-serif); font-variation-settings: var(--soft); font-size: 30px; line-height: 1.3; color: var(--ink); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 7; overflow: hidden; overflow-wrap: anywhere; }
 
 /* ================= Home ================= */
-/* the photo area is 784 x 640 (lib/layout.js HERO_AREA); the print stands at its top */
+/* the photo area is 784 x 640 (lib/layout.js HERO_AREA); the print stands at its top, a panorama in the middle */
 .stage--home { position: absolute; top: 136px; left: var(--edge); right: var(--edge); bottom: 24px; display: grid; grid-template-columns: 784px 1fr; gap: 28px; }
 .hero { position: relative; min-width: 0; }
 .hero-empty { position: absolute; inset: 0; display: grid; place-items: center; font-family: var(--font-serif); font-size: 32px; color: var(--ink-muted); text-align: center; }
@@ -135,6 +135,7 @@ body::before {
 .print--hero { padding: 18px; }
 .slide--landscape .print--hero { padding-bottom: 0; }
 .slide--portrait { gap: 28px; justify-content: flex-start; }
+.slide--centered { align-items: center; } /* a panorama: no band of empty paper below it */
 .slide--portrait .note { flex: 1; min-width: 0; margin-top: 60px; }
 .mat-caption { display: flex; align-items: center; gap: 22px; height: 88px; padding: 0 6px; min-width: 0; }
 .mat-caption .who { flex: none; font-family: var(--font-serif); font-variation-settings: var(--soft); font-size: 40px; font-weight: 600; color: var(--ink); max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -234,7 +235,7 @@ body::before {
 
 /* sent: warm and brief */
 .sent { position: absolute; top: 144px; left: var(--edge); right: var(--edge); bottom: 32px; display: grid; grid-template-columns: auto 470px; justify-content: center; align-items: center; gap: 104px; }
-.sent-print { width: 456px; height: 312px; padding: 16px; margin-top: -24px; }
+.sent-print { padding: 16px; margin-top: -24px; } /* its photo is sized in JS (lib/layout.js sentLayout) */
 .sent-badge { position: absolute; right: -40px; bottom: -40px; height: 104px; padding: 0 34px 0 22px; display: inline-flex; align-items: center; gap: 14px; border-radius: 999px; background: var(--card); box-shadow: inset 0 0 0 4px var(--terracotta-tint), var(--shadow-card); font-size: 34px; font-weight: 700; color: var(--ink); }
 .print .sent-badge img { width: 62px; height: 62px; filter: none; outline: 0; object-fit: contain; }
 .sent-note { position: absolute; right: -56px; bottom: -48px; min-width: 250px; max-width: 380px; padding: 30px 28px 22px; background: var(--card); border-radius: 6px; box-shadow: var(--shadow-card); font-family: var(--font-serif); font-variation-settings: var(--soft); font-size: 38px; font-weight: 550; line-height: 1.1; color: var(--ink); text-align: center; }

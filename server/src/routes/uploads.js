@@ -20,6 +20,7 @@ import { httpError, requireUser } from '../lib/guards.js';
 import { newId } from '../lib/ids.js';
 import { sniffFile } from '../lib/media.js';
 import { enqueue } from '../jobs/queue.js';
+import { immediate } from '../lib/tx.js';
 
 export const UPLOAD_PATH = '/api/uploads';
 export const CAPTION_MAX = 500;
@@ -27,6 +28,8 @@ const FILENAME_MAX = 255;
 const BATCH_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const SCRATCH_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const SWEEP_EVERY_MS = 60 * 60 * 1000;
+// How long a finished upload still answers a retry (OPS-6).
+export const FINISHED_UPLOAD_TTL_MS = 24 * 60 * 60 * 1000;
 
 const NOT_SIGNED_IN = { status_code: 401, body: "You're signed out. Please sign in again.\n" };
 const NOT_FOUND = { status_code: 404, body: "We couldn't find that upload.\n" };
@@ -46,7 +49,17 @@ export const UPLOAD_LIMITS = Object.freeze({
   filesPerDay: 200,
   bytesPerDay: 10 * 1024 ** 3, // 10 GB
   minFreeBytes: 50 * 1024 ** 3, // 50 GB (production; 0 elsewhere unless set)
+  uploadsPerHour: 120, // new uploads per person (chunks are never limited)
 });
+
+// The limits in force for this config (admin health shows the same numbers).
+export function uploadLimitsFor(config, overrides = {}) {
+  return {
+    ...UPLOAD_LIMITS,
+    minFreeBytes: config.isProduction ? UPLOAD_LIMITS.minFreeBytes : 0,
+    ...overrides,
+  };
+}
 const DAY_MS = 24 * 60 * 60 * 1000;
 const OVER_DAILY_BUDGET = {
   status_code: 429,
@@ -103,13 +116,24 @@ export async function sweepScratch(dir, { maxAgeMs = SCRATCH_MAX_AGE_MS, now = D
   return removed;
 }
 
+// Forgets finished uploads older than a day. → how many went.
+export function sweepFinishedUploads(db, { now = Date.now() } = {}) {
+  return db.prepare('DELETE FROM finished_uploads WHERE created_at <= ?').run(now - FINISHED_UPLOAD_TTL_MS).changes;
+}
+
+// The finished upload `uploadId` of this person, from the last day, or null.
+function finishedUpload(db, uploadId, userId) {
+  if (typeof uploadId !== 'string' || !uploadId || !userId) return null;
+  return (
+    db
+      .prepare('SELECT item_id, size FROM finished_uploads WHERE upload_id = ? AND user_id = ? AND created_at > ?')
+      .get(uploadId, userId, Date.now() - FINISHED_UPLOAD_TTL_MS) ?? null
+  );
+}
+
 export default async function uploadRoutes(app, { config, db, uploadLimits = {} }) {
   const { storage } = app;
-  const limits = {
-    ...UPLOAD_LIMITS,
-    minFreeBytes: config.isProduction ? UPLOAD_LIMITS.minFreeBytes : 0,
-    ...uploadLimits,
-  };
+  const limits = uploadLimitsFor(config, uploadLimits);
 
   // Throws a tus error when this upload would go over the person's daily
   // budget or leave the drive below its free-space floor.
@@ -155,7 +179,7 @@ export default async function uploadRoutes(app, { config, db, uploadLimits = {} 
     await fs.rm(`${scratchPath}.json`, { force: true });
 
     try {
-      db.transaction(() => {
+      immediate(db, () => {
         db.prepare(
           `INSERT INTO items (id, user_id, kind, caption, batch_id, status, original_path, original_mime, original_bytes, created_at)
            VALUES (?, ?, ?, ?, ?, 'processing', ?, ?, ?, ?)`,
@@ -171,7 +195,14 @@ export default async function uploadRoutes(app, { config, db, uploadLimits = {} 
           createdAt,
         );
         enqueue(db, { kind: type.kind === 'video' ? 'video' : 'image', refId: itemId, now: createdAt });
-      })();
+        db.prepare('INSERT INTO finished_uploads (upload_id, user_id, item_id, size, created_at) VALUES (?, ?, ?, ?, ?)').run(
+          upload.id,
+          userId,
+          itemId,
+          upload.size ?? upload.offset,
+          createdAt,
+        );
+      });
     } catch (err) {
       await fs.rm(finalPath, { force: true });
       throw err;
@@ -239,6 +270,21 @@ export default async function uploadRoutes(app, { config, db, uploadLimits = {} 
   // tus's web API (handleWeb) with a standard Request: the hooks get exactly
   // this object back, and the response is small enough to write directly.
   const handler = async (request, reply) => {
+    // A retry after a lost final response: the upload is complete and already an
+    // item, so say so (tus-js-client then finishes without sending it again).
+    if (request.method === 'HEAD' || request.method === 'PATCH') {
+      const done = finishedUpload(db, request.params?.id, request.user?.id);
+      if (done) {
+        reply.headers({
+          'tus-resumable': '1.0.0',
+          'upload-offset': String(done.size),
+          'cache-control': 'no-store',
+          'x-item-id': done.item_id,
+        });
+        if (request.method === 'HEAD') reply.header('upload-length', String(done.size));
+        return reply.code(request.method === 'HEAD' ? 200 : 204).send();
+      }
+    }
     const hasBody = request.method === 'POST' || request.method === 'PATCH';
     const webRequest = new Request(new URL(request.url, config.publicOrigin), {
       method: request.method,
@@ -264,7 +310,7 @@ export default async function uploadRoutes(app, { config, db, uploadLimits = {} 
       method: ['POST', 'HEAD', 'PATCH', 'DELETE'],
       url,
       // New uploads per person (chunks of one upload are PATCHes, never limited).
-      config: { rateLimit: { max: 120, timeWindow: '1 hour', keyGenerator: (request) => request.user?.id ?? request.clientIp, allowList: (request) => request.method !== 'POST' } },
+      config: { rateLimit: { max: limits.uploadsPerHour, timeWindow: '1 hour', keyGenerator: (request) => request.user?.id ?? request.clientIp, allowList: (request) => request.method !== 'POST' } },
       // Signed in before the body is touched (onRequest runs before parsing), so
       // nobody can make the app read a large body without a session.
       onRequest: requireUser,
@@ -274,6 +320,11 @@ export default async function uploadRoutes(app, { config, db, uploadLimits = {} 
 
   const sweeper = setInterval(() => {
     sweepScratch(storage.uploadsDir).catch((err) => app.log.warn({ err }, 'Could not sweep old upload chunks'));
+    try {
+      sweepFinishedUploads(db);
+    } catch (err) {
+      app.log.warn({ err }, 'Could not forget old finished uploads');
+    }
   }, SWEEP_EVERY_MS);
   sweeper.unref();
   app.addHook('onClose', async () => clearInterval(sweeper));

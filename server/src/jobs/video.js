@@ -46,7 +46,10 @@ export async function run(ctx, job) {
   renditions.push(
     await writeRendition(storage, item.id, VIDEO_RENDITION, async (out) => {
       try {
-        await media.transcodeVideo({ input, output: out, hdr: probe.hdr, maxSeconds: limit }, { signal });
+        await media.transcodeVideo(
+          { input, output: out, hdr: probe.hdr, maxSeconds: limit, durationMs: probe.durationMs },
+          { signal },
+        );
       } catch (err) {
         if (!err?.timedOut) throw err;
         // Trying again would take just as long and hold every other video back.

@@ -5,7 +5,7 @@
 // - API GETs are network-first, with the last good answer when offline.
 // - Every push shows a notification (iOS revokes push for silent ones).
 
-const VERSION = 'family-2026-10-22-3';
+const VERSION = 'family-2026-10-22-4';
 const SHELL_CACHE = `shell-${VERSION}`;
 const PAGE_CACHE = 'pages';
 const MEDIA_CACHE = 'media-v1';
@@ -23,11 +23,14 @@ const SHELL = [
   '/shared/sse.js',
   '/shared/icons.js',
   '/shared/dom.js',
+  '/shared/names.js',
   '/app/app.css',
   '/app/main.js',
   '/app/router.js',
   '/app/session.js',
   '/app/data.js',
+  '/app/invite-copy.js',
+  '/app/admin-health.js',
   '/app/grouping.js',
   '/app/platform.js',
   '/app/upload-queue.js',

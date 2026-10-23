@@ -5,6 +5,7 @@
 import { httpError } from './guards.js';
 import { newId } from './ids.js';
 import { randomToken, sha256 } from './tokens.js';
+import { immediate } from './tx.js';
 
 const MAX_NAME_LENGTH = 80;
 
@@ -65,7 +66,7 @@ export function pairDevice(db, { name, createdBy = null, publicUrl }) {
 // Creates an active admin, or promotes/restores the person who has that email.
 // Returns { user, outcome } with outcome 'created' | 'promoted' | 'restored' | 'unchanged'.
 export function ensureAdmin(db, { name, email }) {
-  return db.transaction(() => {
+  return immediate(db, () => {
     const existing = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
     const now = Date.now();
     if (!existing) {
@@ -93,7 +94,7 @@ export function ensureAdmin(db, { name, email }) {
          activated_at = COALESCE(activated_at, ?) WHERE id = ?`,
     ).run(now, existing.id);
     return { user: db.prepare('SELECT * FROM users WHERE id = ?').get(existing.id), outcome };
-  })();
+  });
 }
 
 // Deletes an item, its renditions, its original, any voice notes left on it and
@@ -104,11 +105,11 @@ export async function deleteItem(db, storage, itemId, { log = null } = {}) {
   if (!item) return false;
   const notes = db.prepare('SELECT id, original_path FROM voice_notes WHERE item_id = ?').all(itemId);
 
-  db.transaction(() => {
+  immediate(db, () => {
     const refs = [itemId, ...notes.map((n) => n.id)];
     db.prepare(`DELETE FROM jobs WHERE ref_id IN (${refs.map(() => '?').join(',')})`).run(...refs);
     db.prepare('DELETE FROM items WHERE id = ?').run(itemId); // cascades renditions, views, voice notes
-  })();
+  });
 
   // The rows are gone; a file that won't delete is only wasted space, so log it and carry on.
   const removals = [storage.remove(item.original_path), storage.removeRenditions(itemId)];

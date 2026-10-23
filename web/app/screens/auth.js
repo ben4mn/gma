@@ -9,7 +9,9 @@ import { hasPasskeyHint, setPasskeyHint } from '../session.js';
 import { detectInAppBrowser, openInBrowserSteps } from '../platform.js';
 import { passkeysSupported, platformPasskeysAvailable, prefetchOptions, fetchLoginOptions, fetchRegisterOptions, signInWithPasskey, registerPasskey, registrationFailure } from '../passkeys.js';
 import { pageHead } from './shell.js';
-import { currentPlatform, installGuideView, isStandalone } from './prompts.js';
+import { inviteProblemCopy } from '../invite-copy.js';
+import { MAX_SHORT_NAME, shortNameFor } from '../../shared/names.js';
+import { copyLinkButton, currentPlatform, installGuideView, isStandalone } from './prompts.js';
 
 function errorLine() {
   return h('p', { class: 'form-error', role: 'alert', hidden: true });
@@ -31,26 +33,15 @@ function inAppNotice() {
   const app = detectInAppBrowser(navigator.userAgent, { standalone: isStandalone() });
   if (!app) return null;
   const { browser, steps } = openInBrowserSteps(currentPlatform());
-  const copied = h('p', { class: 'body-text', role: 'status' });
+  const copy = copyLinkButton({ browser, url: location.href });
   const note = h('div', { class: 'note' },
     h('p', { class: 'note-title' }, `Open this in ${browser}`),
     h('p', null, `You’re looking at this inside ${app === 'another app' ? 'another app' : `the ${app} app`}. Setting up works best in ${browser}, so you stay signed in and can add it to your Home Screen.`),
     h('ol', { class: 'steps' }, steps.map((s) => h('li', null, s))),
     h('div', { class: 'row' },
-      h('button', {
-        type: 'button',
-        class: 'btn btn--secondary',
-        onclick: async () => {
-          try {
-            await navigator.clipboard.writeText(location.href);
-            copied.textContent = `Copied. Now open ${browser} and paste it into the address bar.`;
-          } catch {
-            copied.textContent = `Press and hold the address at the top, copy it, then paste it into ${browser}.`;
-          }
-        },
-      }, icon('copy'), 'Copy link'),
+      copy.button,
       h('button', { type: 'button', class: 'btn btn--quiet', onclick: () => note.remove() }, 'Continue here anyway')),
-    copied);
+    copy.status);
   return note;
 }
 
@@ -286,23 +277,35 @@ export function joinScreen(main, ctx) {
     }
     if (stopped) return;
     if (!invite?.valid) {
+      const copy = inviteProblemCopy(invite?.reason);
       mount(main,
-        pageHead({ title: 'This invite has expired', sub: 'Invites work once, for 14 days. Ask Ben to send you a new one.' }),
-        h('p', { class: 'body-text' }, 'Already joined? You can sign in instead.'),
-        h('a', { class: 'btn btn--primary btn--block', href: '/signin' }, 'Sign in'));
+        pageHead({ title: copy.title, sub: copy.sub }),
+        copy.line ? h('p', { class: 'body-text' }, copy.line) : null,
+        h('a', { class: 'btn btn--primary btn--block', href: copy.action.href }, copy.action.label));
       return;
     }
     const error = errorLine();
     const name = h('input', { class: 'input', id: 'name', name: 'name', autocomplete: 'name', required: true, value: invite.name ?? '' });
+    // What the frame calls them. It follows the name until they change it themselves.
+    const short = h('input', { class: 'input', id: 'short-name', name: 'short_name', autocomplete: 'off', autocapitalize: 'words', maxlength: String(MAX_SHORT_NAME), 'aria-describedby': 'short-name-help', value: shortNameFor(invite.name ?? '') });
+    let shortEdited = false;
+    name.addEventListener('input', () => { if (!shortEdited) short.value = shortNameFor(name.value); });
+    short.addEventListener('input', () => { shortEdited = true; });
     const email = h('input', { class: 'input', id: 'email', type: 'email', name: 'email', autocomplete: 'email', inputmode: 'email', autocapitalize: 'off', spellcheck: 'false', required: true, value: invite.email ?? '' });
     const submit = h('button', { type: 'submit', class: 'btn btn--primary btn--block' }, 'Continue');
     const form = h('form', { novalidate: true },
-      h('div', { class: 'field' }, h('label', { for: 'name' }, 'Your name'), name, h('small', null, 'Your first and last name, like “Sarah Lee”. Grandma sees your first name; Ben can change what she calls you.')),
+      h('div', { class: 'field' }, h('label', { for: 'name' }, 'Your name'), name, h('small', null, 'Your first and last name, like “Sarah Lee”.')),
+      h('div', { class: 'field' },
+        h('label', { for: 'short-name' }, 'What does Grandma call you?'),
+        short,
+        h('small', { id: 'short-name-help' }, 'Her frame says “Photo from Sarah” or “Photo from Uncle Mike”. You can leave it as it is.')),
       h('div', { class: 'field' }, h('label', { for: 'email' }, 'Your email'), email, h('small', null, 'We’ll send you a code to sign in. No password.')),
       error, submit);
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const values = { name: name.value.trim(), email: email.value.trim() };
+      const shortName = short.value.trim().replace(/\s+/g, ' ');
+      if (shortName) values.short_name = shortName;
       if (!values.name) return showError(error, 'Please tell us your name.');
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.email)) return showError(error, 'Please check your email address.');
       showError(error, '');

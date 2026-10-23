@@ -198,9 +198,12 @@ export const TONE_MAP_FILTER =
 export const SCALE_FILTER =
   "scale=w='if(gte(iw,ih),-2,min(720,trunc(iw/2)*2))':h='if(gte(iw,ih),min(720,trunc(ih/2)*2),-2)'";
 
+// HDR is scaled to 720p BEFORE the tone map (OPS-1): the tone map works in
+// 32-bit float RGB, and on full 4K frames it ran at about 0.05x real time on the
+// worker's 3 CPUs (a 3-minute 4K HDR clip took about an hour). Scaling first
+// measured about 7x faster with the same output.
 export function videoFilter({ hdr }) {
-  const scale = `${SCALE_FILTER},format=yuv420p`;
-  return hdr ? `${TONE_MAP_FILTER},${scale}` : scale;
+  return hdr ? `${SCALE_FILTER},${TONE_MAP_FILTER},format=yuv420p` : `${SCALE_FILTER},format=yuv420p`;
 }
 
 // One video must not take every core of the shared server.
@@ -240,11 +243,22 @@ export function buildVideoArgs({ input, output, hdr = false, maxSeconds = null }
   ];
 }
 
-// A transcode's time limit: generous for a real video of `maxSeconds` on two
-// threads, but bounded, so one crafted file can't hold the video queue.
-export function videoTimeoutMs(maxSeconds) {
-  const seconds = Number.isFinite(maxSeconds) && maxSeconds > 0 ? maxSeconds : 180;
-  return Math.min(30 * 60_000, Math.max(5 * 60_000, seconds * 4 * 1000));
+// A transcode's time limit follows the clip: 30 s of work per second of video
+// (4K HDR needs about 3 s once it is scaled first, so this is a wide margin),
+// never under 10 minutes. The seconds counted are the probed duration, cut at
+// the limit plus the one second the -t cap allows (a file can't claim to be
+// longer than the transcode will ever run), or that cap when the duration is
+// unknown. So a crafted file holds the video queue for at most ~90 minutes.
+export const VIDEO_TIMEOUT_FLOOR_MS = 10 * 60_000;
+export const VIDEO_TIMEOUT_PER_SECOND_MS = 30_000;
+const DEFAULT_MAX_VIDEO_SECONDS = 180;
+
+export function videoTimeoutMs({ durationMs = null, maxSeconds = null } = {}) {
+  const limit = Number.isFinite(maxSeconds) && maxSeconds > 0 ? maxSeconds : DEFAULT_MAX_VIDEO_SECONDS;
+  const cap = Math.ceil(limit) + 1;
+  const known = Number.isFinite(durationMs) && durationMs > 0;
+  const seconds = known ? Math.min(Math.ceil(durationMs / 1000), cap) : cap;
+  return Math.max(VIDEO_TIMEOUT_FLOOR_MS, seconds * VIDEO_TIMEOUT_PER_SECOND_MS);
 }
 
 // The poster frame: 1 s in, or the first frame of a clip shorter than that.
@@ -320,10 +334,10 @@ export function createMediaTools({ exec: run = exec, which = findBinary } = {}) 
         throw new MediaToolError('ffprobe printed something that was not JSON', { tool: 'ffprobe' });
       }
     },
-    async transcodeVideo({ input, output, hdr, maxSeconds = null }, { signal } = {}) {
+    async transcodeVideo({ input, output, hdr, maxSeconds = null, durationMs = null }, { signal } = {}) {
       await run(binary('ffmpeg'), buildVideoArgs({ input, output, hdr, maxSeconds }), {
         signal,
-        timeoutMs: videoTimeoutMs(maxSeconds),
+        timeoutMs: videoTimeoutMs({ durationMs, maxSeconds }),
       });
     },
     async extractPoster({ input, output, durationMs, hdr }, { signal } = {}) {

@@ -15,6 +15,7 @@
 
 import webpush from 'web-push';
 import { now } from './time.js';
+import { immediate } from './tx.js';
 
 export const PUSH_TTL_SECONDS = 2 * 24 * 60 * 60;
 export const MAX_FAILURES = 5;
@@ -56,6 +57,15 @@ async function settleAll(list, limit, fn) {
   return results;
 }
 
+// Only a push service's own definitive refusal (a 4xx other than 408 Request
+// Timeout and 429 Too Many Requests) counts toward MAX_FAILURES. A network error
+// (DNS, a reset, our 15 s timeout), a 5xx or a 429 says nothing about the
+// subscription, so it never counts: a DNS hiccup on Ben's side or a burst after
+// an outage must not delete a relative's subscription without a sign.
+export function countsTowardDrop(statusCode) {
+  return Number.isInteger(statusCode) && statusCode >= 400 && statusCode < 500 && statusCode !== 408 && statusCode !== 429;
+}
+
 function recordResults(db, subs, results) {
   const succeeded = db.prepare('UPDATE push_subscriptions SET failures = 0, last_success_at = ? WHERE id = ?');
   const gone = db.prepare('DELETE FROM push_subscriptions WHERE id = ?');
@@ -64,7 +74,7 @@ function recordResults(db, subs, results) {
   const tally = { sent: 0, failed: 0, removed: 0 };
   const at = now();
 
-  db.transaction(() => {
+  immediate(db, () => {
     results.forEach((result, i) => {
       const sub = subs[i];
       if (result.status === 'fulfilled') {
@@ -79,10 +89,11 @@ function recordResults(db, subs, results) {
         tally.removed += gone.run(sub.id).changes;
         return;
       }
+      if (!countsTowardDrop(status)) return;
       failedOnce.run(sub.id);
       tally.removed += dropDead.run(sub.id, MAX_FAILURES).changes;
     });
-  })();
+  });
   return tally;
 }
 

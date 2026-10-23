@@ -16,6 +16,7 @@ import { isId } from '../lib/ids.js';
 import { canEdit, canView } from '../lib/item-access.js';
 import { shortNameOf } from '../lib/people.js';
 import { cancelQueued } from '../jobs/queue.js';
+import { immediate } from '../lib/tx.js';
 
 export const PAGE_DEFAULT = 30;
 export const PAGE_MAX = 100;
@@ -115,7 +116,7 @@ export function loadItemRow(db, id) {
 // Deletes an item, its renditions, its original and any family voice notes on
 // it. Grandma's Feed keeps its history (grandma_events.item_id becomes NULL).
 export async function removeItem({ db, storage, log }, itemId) {
-  const removed = db.transaction(() => {
+  const removed = immediate(db, () => {
     const item = db.prepare('SELECT id, original_path FROM items WHERE id = ?').get(itemId);
     if (!item) return null;
     const notes = db.prepare('SELECT id, original_path FROM voice_notes WHERE item_id = ?').all(itemId);
@@ -124,7 +125,7 @@ export async function removeItem({ db, storage, log }, itemId) {
     db.prepare('DELETE FROM items WHERE id = ?').run(itemId);
     publish(db, 'item.removed', { item_id: itemId });
     return { item, notes };
-  })();
+  });
   if (!removed) return false;
 
   const cleanups = [storage.removeRenditions(itemId), storage.remove(removed.item.original_path)];

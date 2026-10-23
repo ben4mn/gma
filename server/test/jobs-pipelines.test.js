@@ -256,7 +256,8 @@ test('HDR video is tone-mapped, and a sub-second clip takes its poster at 0 s', 
   const { id } = await addItem(ctx, { kind: 'video', mime: 'video/quicktime', ext: 'mov', bytes: Buffer.from('mov') });
   await videoJob.run(jobCtx(ctx, createMediaTools({ exec: exec.run, which: (n) => `/fake/${n}` })), { ref_id: id });
   const transcode = exec.calls.find((c) => c.args.includes('libx264'));
-  assert.match(transcode.args[transcode.args.indexOf('-vf') + 1], /^zscale=t=linear.*tonemap=tonemap=hable.*,scale=w=.*,format=yuv420p$/);
+  // Scaled first (OPS-1): the float tone map runs on 720p frames.
+  assert.match(transcode.args[transcode.args.indexOf('-vf') + 1], /^scale=w=.*,zscale=t=linear.*tonemap=tonemap=hable.*,format=yuv420p$/);
   const poster = exec.calls.find((c) => c.args.includes('png'));
   assert.equal(poster.args[poster.args.indexOf('-ss') + 1], '0');
   assert.match(poster.args[poster.args.indexOf('-vf') + 1], /tonemap/);

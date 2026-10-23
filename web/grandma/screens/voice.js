@@ -3,7 +3,7 @@
 // says plainly, at every step, that the whole family will hear it.
 import { h, photo, icon } from '../lib/dom.js';
 import { createRecorder, MAX_MS } from '../lib/recorder.js';
-import { formatCountdown } from '../lib/time.js';
+import { formatCountdown, secondsWords } from '../lib/time.js';
 import { SENT_MS } from './item.js';
 
 // Taps this soon after a voice screen changes are ignored: the second tap of a
@@ -91,7 +91,7 @@ export function renderVoice(ctx, params = {}) {
       player.play().catch(() => { stopPlayback(); listen.replaceChildren(icon('play'), 'Hear it'); });
     }));
     return layout(
-      h('p', { class: 'voice-help' }, `Your message is ${Math.max(1, Math.round(take.durationMs / 1000))} seconds long. Hear it, then send it.`),
+      h('p', { class: 'voice-help' }, `Your message is ${secondsWords(Math.max(1, Math.round(take.durationMs / 1000)))} long. Hear it, then send it.`),
       h('div', { class: 'voice-controls voice-controls--recorded' },
         listen,
         h('button', { class: 'send-all-btn', type: 'button', onClick: settled(send) }, 'Send to everyone'),

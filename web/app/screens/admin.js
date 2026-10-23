@@ -1,10 +1,12 @@
-// Admin (Ben): people and invites, uploads, the frame, preset messages and
-// night hours. Each section is its own path under /admin.
+// Admin (Ben): people and invites, uploads, the frame, preset messages, night
+// hours and the server's health. Each section is its own path under /admin.
 import { h, mount, confirmButton } from '../../shared/dom.js';
 import { icon } from '../../shared/icons.js';
 import { api } from '../../shared/api.js';
 import { agoLabel, whenLabel } from '../../shared/time.js';
 import { renditionUrl, ownerOf } from '../data.js';
+import { healthLines } from '../admin-health.js';
+import { MAX_SHORT_NAME, shortNameFor } from '../../shared/names.js';
 import { pageHead, errorNote } from './shell.js';
 
 const SECTIONS = [
@@ -13,6 +15,7 @@ const SECTIONS = [
   { slug: 'frame', label: 'The frame' },
   { slug: 'messages', label: 'Messages' },
   { slug: 'night', label: 'Night hours' },
+  { slug: 'health', label: 'Health' },
 ];
 
 const listOf = (res, ...keys) => (Array.isArray(res) ? res : keys.map((k) => res?.[k]).find(Array.isArray) ?? []);
@@ -44,6 +47,15 @@ function row(main, meta, actions, thumb) {
     actions ? h('div', { class: 'row' }, actions) : null);
 }
 
+/** Wraps a list action so a refusal (like removing yourself) is said in `errorEl` instead of lost. */
+function act(errorEl, fn) {
+  return async (...args) => {
+    errorEl.hidden = true;
+    try { await fn(...args); } catch (err) { errorEl.textContent = err.message; errorEl.hidden = false; }
+  };
+}
+const actionError = () => h('p', { class: 'form-error', role: 'alert', hidden: true });
+
 function section(slot, loader) {
   const reload = async () => {
     try { await loader(reload); } catch (err) { mount(slot, errorNote(err.message, reload)); }
@@ -52,13 +64,10 @@ function section(slot, loader) {
   reload();
 }
 
-// Must match the server's limit (server/src/lib/people.js).
-const MAX_SHORT_NAME = 30;
-
-/** What Grandma's frame calls someone ("Mike", "Grandpa Joe"); it defaults to the first word of their name. */
+/** What Grandma's frame calls someone ("Mike", "Grandpa Joe"): their short name, else worked out from their name. */
 export function grandmaNameOf(person) {
   const chosen = typeof person?.short_name === 'string' ? person.short_name.trim() : '';
-  return chosen || (typeof person?.name === 'string' ? person.name.trim().split(/\s+/)[0] : '') || '';
+  return chosen || shortNameFor(person?.name);
 }
 
 /** "Grandma calls them Mike · Change", which opens a one-line form. Saves with PATCH /api/admin/people/:id. */
@@ -110,6 +119,27 @@ function grandmaName(person) {
   return wrap;
 }
 
+/** "Cancel invite": the link stops working, and a person it made who never signed in is taken off the list. */
+function cancelInviteButton(inv, reload) {
+  const wrap = h('div', { class: 'stack-tight' });
+  const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
+  wrap.append(confirmButton({
+    label: 'Cancel invite',
+    confirmLabel: 'Tap again to cancel',
+    onConfirm: async () => {
+      error.hidden = true;
+      try {
+        await api.del(`/api/admin/invites/${encodeURIComponent(inv.id)}`);
+        reload();
+      } catch (err) {
+        error.textContent = err.message;
+        error.hidden = false;
+      }
+    },
+  }), error);
+  return wrap;
+}
+
 function people(slot) {
   const created = h('div');
   const name = h('input', { class: 'input', id: 'inv-name', autocomplete: 'off' });
@@ -129,21 +159,24 @@ function people(slot) {
   const loadLists = async (reload) => {
     const res = await api.get('/api/admin/people');
     const users = listOf(res, 'people', 'users');
-    const invites = listOf(res, 'invites').filter((i) => !i.used_at && !i.revoked_at);
+    const failed = actionError();
+    // An opened invite whose person hasn't finished signing in can still be cancelled.
+    const invites = listOf(res, 'invites').filter((i) => !i.revoked_at);
     mount(lists,
       invites.length ? [h('h2', { class: 'section-title' }, 'Waiting to join'), h('div', { class: 'card' }, invites.map((inv) => row(
         inv.name || inv.email,
-        `${inv.email || 'No email'} · expires ${whenLabel(inv.expires_at)}`,
-        confirmButton({ label: 'Cancel invite', confirmLabel: 'Tap again to cancel', onConfirm: async () => { await api.del(`/api/admin/invites/${encodeURIComponent(inv.id)}`); reload(); } }))))] : null,
+        [inv.email || 'No email', inv.used_at ? 'opened it, hasn’t finished signing in' : `expires ${whenLabel(inv.expires_at)}`].join(' · '),
+        cancelInviteButton(inv, reload))))] : null,
       h('h2', { class: 'section-title' }, `Family (${users.filter((u) => u.status !== 'removed').length})`),
       h('div', { class: 'card' }, users.map((u) => h('div', { class: 'person' },
         row(
           u.name,
           [u.email, u.role === 'admin' ? 'admin' : null, u.status === 'pending' ? 'hasn’t signed in yet' : null, u.status === 'removed' ? 'removed' : null].filter(Boolean).join(' · '),
           u.status === 'removed'
-            ? h('button', { type: 'button', class: 'btn btn--quiet', onclick: async () => { await api.post(`/api/admin/people/${encodeURIComponent(u.id)}/restore`); reload(); } }, 'Restore')
-            : confirmButton({ label: 'Remove', confirmLabel: 'Tap again: signs them out everywhere', onConfirm: async () => { await api.post(`/api/admin/people/${encodeURIComponent(u.id)}/remove`); reload(); } })),
-        u.status === 'removed' ? null : grandmaName(u)))));
+            ? h('button', { type: 'button', class: 'btn btn--quiet', onclick: act(failed, async () => { await api.post(`/api/admin/people/${encodeURIComponent(u.id)}/restore`); reload(); }) }, 'Restore')
+            : confirmButton({ label: 'Remove', confirmLabel: 'Tap again: signs them out everywhere', onConfirm: act(failed, async () => { await api.post(`/api/admin/people/${encodeURIComponent(u.id)}/remove`); reload(); }) })),
+        u.status === 'removed' ? null : grandmaName(u)))),
+      failed);
   };
   section(lists, loadLists);
 
@@ -155,9 +188,14 @@ function people(slot) {
     try {
       const res = await api.post('/api/admin/invites', { name: name.value.trim(), email: email.value.trim(), role: role.value, send: send.checked });
       const url = res?.url ?? res?.link ?? res?.invite_url ?? res?.invite?.url;
+      // `sent` is the server's word: the console transport only prints the email to the log.
+      const emailed = res?.sent === true;
+      const notSent = send.checked && !emailed;
       mount(created, onceLink(url ?? '(the server didn’t return a link)', {
-        title: send.checked && email.value.trim() ? `Invite emailed to ${name.value.trim()}` : `Invite for ${name.value.trim()}`,
-        note: 'You can also send this link yourself, by text for example. It works once, for 14 days, and won’t be shown again.',
+        title: emailed ? `Invite emailed to ${name.value.trim()}` : `Invite for ${name.value.trim()}`,
+        note: notSent
+          ? 'The email wasn’t sent from here (email isn’t set up yet), so send this link yourself, by text for example. It works once, for 14 days, and won’t be shown again.'
+          : 'You can also send this link yourself, by text for example. It works once, for 14 days, and won’t be shown again.',
       }));
       form.reset();
       send.checked = true;
@@ -183,7 +221,8 @@ function uploads(slot) {
     section(list, async (reload) => {
       const items = listOf(await api.get(`/api/admin/items${status ? `?status=${status}` : ''}`), 'items');
       if (!items.length) { mount(list, h('p', { class: 'body-text body-text--muted' }, 'Nothing here.')); return; }
-      mount(list, h('div', { class: 'card' }, items.map((item) => {
+      const failed = actionError();
+      mount(list, failed, h('div', { class: 'card' }, items.map((item) => {
         const owner = ownerOf(item);
         const thumb = item.status === 'ready' || item.status === 'hidden' ? h('img', { class: 'thumb', src: renditionUrl(item, 'thumb') ?? '', alt: '', loading: 'lazy' }) : h('span', { class: 'thumb' });
         const id = encodeURIComponent(item.id);
@@ -192,9 +231,9 @@ function uploads(slot) {
           [`${owner.name}`, whenLabel(item.created_at), item.status === 'ready' ? null : item.status, item.error].filter(Boolean).join(' · '),
           [
             item.status === 'hidden'
-              ? h('button', { type: 'button', class: 'btn btn--quiet', onclick: async () => { await api.post(`/api/admin/items/${id}/unhide`); reload(); } }, 'Show')
-              : item.status === 'ready' ? h('button', { type: 'button', class: 'btn btn--quiet', onclick: async () => { await api.post(`/api/admin/items/${id}/hide`); reload(); } }, 'Hide') : null,
-            confirmButton({ label: 'Delete', confirmLabel: 'Tap again to delete', onConfirm: async () => { await api.del(`/api/admin/items/${id}`); reload(); } }),
+              ? h('button', { type: 'button', class: 'btn btn--quiet', onclick: act(failed, async () => { await api.post(`/api/admin/items/${id}/unhide`); reload(); }) }, 'Show')
+              : item.status === 'ready' ? h('button', { type: 'button', class: 'btn btn--quiet', onclick: act(failed, async () => { await api.post(`/api/admin/items/${id}/hide`); reload(); }) }, 'Hide') : null,
+            confirmButton({ label: 'Delete', confirmLabel: 'Tap again to delete', onConfirm: act(failed, async () => { await api.del(`/api/admin/items/${id}`); reload(); }) }),
           ],
           thumb);
       })));
@@ -214,26 +253,20 @@ function frame(slot) {
 
   const loadDevices = () => section(list, async (reload) => {
     const devices = listOf(await api.get('/api/admin/devices'), 'devices');
-    mount(list, devices.length ? h('div', { class: 'card' }, devices.map((d) => {
+    const failed = actionError();
+    mount(list, failed, devices.length ? h('div', { class: 'card' }, devices.map((d) => {
       const id = encodeURIComponent(d.id);
       const meta = d.revoked_at ? 'Unpaired' : d.last_seen_at ? `Last seen ${agoLabel(d.last_seen_at)}` : 'Not seen yet';
       return row(d.name, meta, d.revoked_at ? null : [
-        h('button', { type: 'button', class: 'btn btn--quiet', onclick: async (e) => { await api.post(`/api/admin/devices/${id}/reload`); e.target.textContent = 'Reload sent'; } }, 'Reload'),
-        confirmButton({ label: 'Unpair', confirmLabel: 'Tap again to unpair', onConfirm: async () => { await api.post(`/api/admin/devices/${id}/revoke`); reload(); } }),
+        h('button', { type: 'button', class: 'btn btn--quiet', onclick: act(failed, async (e) => { const button = e.currentTarget; await api.post(`/api/admin/devices/${id}/reload`); button.textContent = 'Reload sent'; }) }, 'Reload'),
+        confirmButton({ label: 'Unpair', confirmLabel: 'Tap again to unpair', onConfirm: act(failed, async () => { await api.post(`/api/admin/devices/${id}/revoke`); reload(); }) }),
       ]);
     })) : h('p', { class: 'body-text body-text--muted' }, 'No frame is paired yet.'));
   });
 
-  section(health, async () => {
-    const hl = await api.get('/api/admin/health');
-    const facts = [
-      hl?.queue_depth != null ? `${hl.queue_depth} waiting to be processed` : null,
-      hl?.failed_jobs ? `${hl.failed_jobs} failed` : null,
-      hl?.disk_free_bytes != null ? `${(hl.disk_free_bytes / 1024 ** 3).toFixed(1)} GB free` : null,
-      hl?.frame_last_seen ? `frame seen ${agoLabel(hl.frame_last_seen)}` : null,
-    ].filter(Boolean);
-    mount(health, facts.length ? h('p', { class: 'body-text body-text--muted' }, facts.join(' · ')) : null);
-  });
+  mount(health,
+    h('p', { class: 'body-text body-text--muted' }, 'Backups, the photo drive and anything that couldn’t be processed are on the Health page.'),
+    h('a', { class: 'btn btn--quiet', href: '/admin/health' }, 'See Health'));
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -324,7 +357,25 @@ function night(slot) {
   });
 }
 
-const RENDER = { people, uploads, frame, messages, night };
+/** The calm health card: one line each, and only what needs a look is marked. */
+function health(slot) {
+  section(slot, async (reload) => {
+    const lines = healthLines(await api.get('/api/admin/health'));
+    const flagged = lines.filter((l) => l.warn).length;
+    mount(slot,
+      h('h2', { class: 'section-title' }, 'Health'),
+      h('p', { class: 'body-text', role: 'status' }, flagged
+        ? `${flagged === 1 ? 'One thing needs' : `${flagged} things need`} a look. The rest is fine.`
+        : 'Everything looks fine.'),
+      h('div', { class: 'card health' }, lines.map((line) => h('div', { class: line.warn ? 'health-row is-warn' : 'health-row', dataset: { health: line.key } },
+        h('p', { class: 'card-name' }, line.label),
+        h('p', { class: 'card-meta' }, line.value),
+        line.details?.length ? h('ul', { class: 'health-details' }, line.details.map((d) => h('li', null, d))) : null))),
+      h('button', { type: 'button', class: 'btn btn--secondary', onclick: reload }, 'Check again'));
+  });
+}
+
+const RENDER = { people, uploads, frame, messages, night, health };
 
 export function adminScreen(main, ctx) {
   const slug = RENDER[ctx.params.section] ? ctx.params.section : 'people';

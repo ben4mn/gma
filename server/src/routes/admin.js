@@ -15,8 +15,10 @@ import { MAX_SHORT_NAME_LENGTH, shortNameOf } from '../lib/people.js';
 import { perIp } from '../lib/rate-limits.js';
 import { revokeDeviceSessions, revokeUserSessions } from '../lib/sessions.js';
 import { getSetting, getSettings, setSettings } from '../lib/settings.js';
+import { uploadLimitsFor } from './uploads.js';
 import { DAY, isValidClockTime } from '../lib/time.js';
 import { randomToken, sha256 } from '../lib/tokens.js';
+import { immediate } from '../lib/tx.js';
 
 export const INVITE_LIFE_MS = 14 * DAY;
 export const MAX_ACTIVE_PRESETS = 8; // what fits on Grandma's screen
@@ -170,7 +172,8 @@ function listPresets(db) {
 // ---------------------------------------------------------------------------
 // Routes
 
-export default async function adminRoutes(app, { config, db }) {
+export default async function adminRoutes(app, { config, db, uploadLimits = {} }) {
+  const limits = uploadLimitsFor(config, uploadLimits);
   app.addHook('onRequest', async (request, reply) => {
     reply.header('cache-control', 'no-store');
   });
@@ -274,7 +277,7 @@ export default async function adminRoutes(app, { config, db }) {
         revoked_at: null,
         created_at: now,
       };
-      db.transaction(() => {
+      immediate(db, () => {
         // A new invite to the same address replaces any older open one.
         if (email) {
           db.prepare(
@@ -286,7 +289,7 @@ export default async function adminRoutes(app, { config, db }) {
            VALUES (@id, @token_hash, @created_by, @name, @email, @role, @sent_at, @expires_at, @used_at, @used_by, @revoked_at, @created_at)`,
         ).run(invite);
         log(request, 'invite.create', invite.id, { name, email, role, sent: Boolean(sentAt) });
-      })();
+      });
 
       reply.code(201);
       return { invite: publicInvite(invite), url, sent: Boolean(sentAt) };
@@ -307,7 +310,7 @@ export default async function adminRoutes(app, { config, db }) {
       throw httpError(409, 'invite_used', 'That invite was already used, so there is nothing to cancel.');
     }
     if (!invite.revoked_at || pending) {
-      db.transaction(() => {
+      immediate(db, () => {
         db.prepare('UPDATE invites SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?').run(Date.now(), id);
         let codes = 0;
         let removedPending = false;
@@ -316,7 +319,7 @@ export default async function adminRoutes(app, { config, db }) {
           removedPending = forgetPendingPerson(pending.id);
         }
         log(request, 'invite.revoke', id, { email: invite.email, pending: pending?.id ?? null, codes, removedPending });
-      })();
+      });
     }
     return { invite: publicInvite(db.prepare('SELECT * FROM invites WHERE id = ?').get(id)) };
   });
@@ -333,11 +336,11 @@ export default async function adminRoutes(app, { config, db }) {
     revokeUserSessions(db, userId);
     try {
       // A savepoint: if a row somewhere still points at them, undo just this part.
-      db.transaction(() => {
+      immediate(db, () => {
         db.prepare('UPDATE invites SET used_by = NULL WHERE used_by = ?').run(userId);
         db.prepare('UPDATE invites SET created_user_id = NULL WHERE created_user_id = ?').run(userId);
         db.prepare("DELETE FROM users WHERE id = ? AND status = 'pending'").run(userId);
-      })();
+      });
     } catch (err) {
       if (err?.code !== 'SQLITE_CONSTRAINT_FOREIGNKEY') throw err;
       db.prepare("UPDATE users SET status = 'removed', removed_at = ? WHERE id = ?").run(Date.now(), userId);
@@ -359,7 +362,7 @@ export default async function adminRoutes(app, { config, db }) {
       ? cleanName(body.short_name, { what: 'what Grandma calls them', max: MAX_SHORT_NAME_LENGTH })
       : null;
 
-    db.transaction(() => {
+    immediate(db, () => {
       // The name first: a short name that was still the default follows a new name
       // (migration 002's trigger); a short name sent with it then wins.
       if (hasName && name !== user.name) db.prepare('UPDATE users SET name = ? WHERE id = ?').run(name, id);
@@ -368,7 +371,7 @@ export default async function adminRoutes(app, { config, db }) {
       log(request, 'person.update', id, { name: fresh.name, short_name: fresh.short_name });
       // The frame shows short names in its cards, so tell it to fetch its state again.
       publish(db, 'settings.changed', { keys: ['people'] });
-    })();
+    });
     return { user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(id)) };
   });
 
@@ -381,7 +384,7 @@ export default async function adminRoutes(app, { config, db }) {
     }
     if (user.status !== 'removed') {
       const now = Date.now();
-      db.transaction(() => {
+      immediate(db, () => {
         db.prepare("UPDATE users SET status = 'removed', removed_at = ? WHERE id = ?").run(now, id);
         const sessions = revokeUserSessions(db, id);
         const passkeys = db.prepare('DELETE FROM passkeys WHERE user_id = ?').run(id).changes;
@@ -393,7 +396,7 @@ export default async function adminRoutes(app, { config, db }) {
           'UPDATE invites SET revoked_at = ? WHERE email = ? AND used_at IS NULL AND revoked_at IS NULL',
         ).run(now, user.email);
         log(request, 'person.remove', id, { name: user.name, sessions, passkeys, push });
-      })();
+      });
     }
     return { user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(id)) };
   });
@@ -460,11 +463,11 @@ export default async function adminRoutes(app, { config, db }) {
     const id = idParam(request, 'photo or video');
     const item = findItem(id);
     if (item.status === 'ready') {
-      db.transaction(() => {
+      immediate(db, () => {
         db.prepare("UPDATE items SET status = 'hidden', hidden_at = ? WHERE id = ?").run(Date.now(), id);
         publish(db, 'item.removed', { item_id: id });
         log(request, 'item.hide', id);
-      })();
+      });
     } else if (item.status !== 'hidden') {
       throw httpError(409, 'not_live', "That one isn't showing yet, so there's nothing to hide. You can delete it instead.");
     }
@@ -475,11 +478,11 @@ export default async function adminRoutes(app, { config, db }) {
     const id = idParam(request, 'photo or video');
     const item = findItem(id);
     if (item.status === 'hidden') {
-      db.transaction(() => {
+      immediate(db, () => {
         db.prepare("UPDATE items SET status = 'ready', hidden_at = NULL WHERE id = ?").run(id);
         publish(db, 'item.ready', { item_id: id, user_id: item.user_id });
         log(request, 'item.unhide', id);
-      })();
+      });
     } else if (item.status !== 'ready') {
       throw httpError(409, 'not_hidden', "That one isn't hidden.");
     }
@@ -525,11 +528,11 @@ export default async function adminRoutes(app, { config, db }) {
     const id = idParam(request, 'frame');
     const device = findDevice(id);
     if (!device.revoked_at) {
-      db.transaction(() => {
+      immediate(db, () => {
         db.prepare('UPDATE devices SET revoked_at = ? WHERE id = ?').run(Date.now(), id);
         const sessions = revokeDeviceSessions(db, id);
         log(request, 'device.revoke', id, { name: device.name, sessions });
-      })();
+      });
     }
     return { device: publicDevice(findDevice(id)) };
   });
@@ -579,7 +582,7 @@ export default async function adminRoutes(app, { config, db }) {
       throw bad('too_many_active', `Grandma's screen fits ${MAX_ACTIVE_PRESETS} messages. Turn some off first.`);
     }
 
-    db.transaction(() => {
+    immediate(db, () => {
       const now = Date.now();
       const update = db.prepare('UPDATE presets SET text = ?, sort = ?, active = ? WHERE id = ?');
       const insert = db.prepare('INSERT INTO presets (id, text, sort, active, created_at) VALUES (?, ?, ?, ?, ?)');
@@ -596,7 +599,7 @@ export default async function adminRoutes(app, { config, db }) {
       }
       publish(db, 'settings.changed', { keys: ['presets'] });
       log(request, 'presets.update', null, { texts: presets.filter((p) => p.active).map((p) => p.text) });
-    })();
+    });
     return { presets: listPresets(db) };
   });
 
@@ -606,11 +609,11 @@ export default async function adminRoutes(app, { config, db }) {
 
   app.put('/api/admin/settings', async (request) => {
     const changes = validateSettings(bodyOf(request));
-    db.transaction(() => {
+    immediate(db, () => {
       setSettings(db, changes);
       publish(db, 'settings.changed', { keys: Object.keys(changes) });
       log(request, 'settings.update', null, changes);
-    })();
+    });
     return { settings: getSettings(db, [...EDITABLE_SETTING_KEYS]) };
   });
 
@@ -662,6 +665,16 @@ export default async function adminRoutes(app, { config, db }) {
       worker_last_seen: getSetting(db, 'worker_last_seen', null),
       last_snapshot_at: getSetting(db, 'last_snapshot_at', null),
       last_snapshot: getSetting(db, 'last_snapshot', null),
+      // The per-person upload budget and the free space every new upload must leave.
+      upload_limits: {
+        files_per_day: limits.filesPerDay,
+        bytes_per_day: limits.bytesPerDay,
+        min_free_bytes: limits.minFreeBytes,
+        uploads_per_hour: limits.uploadsPerHour,
+      },
+      below_free_floor: disk.free !== null && limits.minFreeBytes > 0 && disk.free < limits.minFreeBytes,
+      // False when the photo drive's sentinel is gone (it dropped while running).
+      media_mounted: app.storage.isMounted(),
       now: Date.now(),
     };
   });

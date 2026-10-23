@@ -33,6 +33,7 @@ import { loadFeedEvent } from '../lib/grandma-feed.js';
 import { shortNameOf } from '../lib/people.js';
 import { perIp } from '../lib/rate-limits.js';
 import { itemJson, loadRenditions, renditionUrl } from '../lib/renditions.js';
+import { immediate } from '../lib/tx.js';
 
 const SLIDESHOW_LIMIT = 300; // the frame's service worker caches about this many
 const NEW_LIMIT = 100;
@@ -282,7 +283,7 @@ export default async function frameRoutes(app, { config, db, pushSender = undefi
     const id = newId(createdAt);
     let event;
     try {
-      db.transaction(() => {
+      immediate(db, () => {
         statements.insertEvent.run({
           id,
           device_id: deviceId,
@@ -296,7 +297,7 @@ export default async function frameRoutes(app, { config, db, pushSender = undefi
         statements.markSeen.run(deviceId, createdAt, fields.item_id);
         event = loadFeedEvent(db, id);
         publish(db, 'grandma.event', { event }, 'all');
-      })();
+      });
     } catch (err) {
       // Another process inserted the same client_id between our check and insert.
       if (isUniqueViolation(err)) {
@@ -376,9 +377,9 @@ export default async function frameRoutes(app, { config, db, pushSender = undefi
     const at = now();
     const deviceId = request.device.id;
     let seen = 0;
-    db.transaction(() => {
+    immediate(db, () => {
       for (const id of new Set(ids)) seen += statements.markSeen.run(deviceId, at, id).changes;
-    })();
+    });
     return { ok: true, seen };
   });
 
@@ -503,10 +504,10 @@ export default async function frameRoutes(app, { config, db, pushSender = undefi
     }
 
     try {
-      db.transaction(() => {
+      immediate(db, () => {
         statements.insertVoiceNote.run(id, deviceId, key, clientId, createdAt);
         statements.insertJob.run(newId(createdAt), id, createdAt, createdAt, createdAt);
-      })();
+      });
     } catch (err) {
       await app.storage.remove(key);
       if (isUniqueViolation(err)) {

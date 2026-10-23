@@ -65,8 +65,19 @@ These were the recommended defaults in Phase 1; each is a setting or a small cha
 - **`EMAIL_TRANSPORT=console` stays allowed in production** for the first days of a deploy, before Resend is set up for `auth.4mn.org` (the README's bootstrap). It prints messages to the app log, so an invite it "sent" never counts as emailed: opening it still asks for a code. Switch to `resend` before inviting the family.
 - **Limits on a shared box**: per person, 200 files and 10 GB of uploads a day and 120 new uploads an hour; a new upload must leave 50 GB free on the Seagate drive; images over 120 MP are refused; compose caps the app at 1 GB, the worker at 3 GB and the tunnel at 256 MB. After 15 wrong sign-in codes in a day, that email gets no codes until the next day.
 
+## 2026-10-22: What Grandma calls people, HDR video, upgrades
+
+- **Short names**: Grandma's frame shows what she calls each person ("Mike", "Uncle Mike", "Aunt Carol"), never the full name. The default is the first word, or family/title words plus the next word (up to three words, e.g. "Great Aunt Mary"), from one 49-word list shared by `server/src/lib/people.js`, migration 005 and `web/shared/names.js`. The join form asks "What does Grandma call you?" (prefilled), and Ben can change it in `/admin`.
+- **HDR iPhone video** is scaled to 720p *before* the tone map. Measured on the homelab: a 4K 10-bit HLG clip transcodes at 0.32× real time with the worker's 3 CPUs, against 0.05× before. The ffmpeg timeout scales with the clip's length.
+- **Upgrades** take a database snapshot onto the drive before applying any new migration.
+
+## 2026-10-22: Phase 3: the draft lives on gma.4mn.org itself
+
+- Ben (2026-10-22): build right on gma.4mn.org (no `draft.` subdomain). Nobody gets a link until he says so. It stays invite-only and `noindex`, with only fake family data, until then.
+- Host: the Debian homelab (`ben@192.168.68.69`), in `/home/ben/gma`. 4mn.org's DNS is on Cloudflare; the one new record is `gma.4mn.org → tunnel gma`.
+
 ## Still open
 
 - Pi hardware: which 10" panel (DSI with hardware dimming vs HDMI + USB touch), SD vs USB SSD, the mic array, the speaker, Wi-Fi vs Ethernet at Grandma's (Phase 4).
-- 4mn.org DNS (for the email records) and the offsite backup target (Phase 3).
-- Phase 3: the SSH host and whether to use a separate `draft.` subdomain.
+- Resend for `auth.4mn.org` (SPF/DKIM/DMARC) before inviting the family; until then codes are printed in `docker compose logs app`.
+- A daily cloud backup of the Seagate drive (Ben's plan).

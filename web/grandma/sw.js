@@ -15,7 +15,8 @@
 import { VERSION } from './version.js';
 import { mediaKind, planEvictions, rangeResponse, LIMITS } from './lib/media-cache.js';
 
-const SHELL_CACHE = `gma-frame-shell-${VERSION}`;
+const SHELL_PREFIX = 'gma-frame-shell-';
+const SHELL_CACHE = `${SHELL_PREFIX}${VERSION}`;
 const STATE_CACHE = 'gma-frame-state';
 const MEDIA_CACHE = 'gma-frame-media';
 const NETWORK_TIMEOUT_MS = 4000;
@@ -27,7 +28,7 @@ const STATE_KEY = new URL('/api/frame/state', self.location).href;
 
 const SHELL = [
   './', './grandma.css', './grandma.js', './version.js',
-  './lib/api.js', './lib/cards.js', './lib/dom.js', './lib/idle.js', './lib/layout.js', './lib/live.js',
+  './lib/api.js', './lib/cards.js', './lib/clock.js', './lib/dom.js', './lib/idle.js', './lib/layout.js', './lib/live.js',
   './lib/media-cache.js', './lib/outbox.js', './lib/outbox-core.js', './lib/recorder.js', './lib/time.js',
   './screens/home.js', './screens/item.js', './screens/night.js', './screens/voice.js',
   '../assets/fonts/fraunces-latin.woff2', '../assets/fonts/atkinson-next-latin.woff2',
@@ -35,19 +36,43 @@ const SHELL = [
   '../assets/emoji/emoji_u1f62e.svg', '../assets/emoji/emoji_u1f64f.svg',
 ].map(here);
 
+// An update is all or nothing. Every shell file is fetched and read whole before
+// any of it is written, so a Wi-Fi blip mid-update never leaves a half-filled
+// cache: the install fails, the old worker keeps serving its complete shell, and
+// the browser tries again at the next update check (the frame asks every hour).
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
-    const cache = await caches.open(SHELL_CACHE);
-    // one missing file must not stop the rest from being saved
-    await Promise.allSettled(SHELL.map((url) => cache.add(new Request(url, { cache: 'reload' }))));
+    await precacheShell();
     await self.skipWaiting();
   })());
 });
 
+async function precacheShell() {
+  const files = await Promise.all(SHELL.map(async (url) => {
+    const res = await fetch(new Request(url, { cache: 'reload', credentials: 'same-origin' }));
+    // a redirect here is a sign-in page or similar, never the file we asked for
+    if (!res.ok || res.redirected) throw new Error(`Could not save ${url} (HTTP ${res.status})`);
+    const body = await res.arrayBuffer(); // the whole file is here before anything is written
+    return [url, new Response(body, { status: res.status, statusText: res.statusText, headers: res.headers })];
+  }));
+  const cache = await caches.open(SHELL_CACHE);
+  await Promise.all(files.map(([url, res]) => cache.put(url, res)));
+}
+
+/** True when `name` holds every shell file. */
+async function shellComplete(name) {
+  const cache = await caches.open(name);
+  const found = await Promise.all(SHELL.map((url) => cache.match(url)));
+  return found.every(Boolean);
+}
+
+// The old shell is deleted only once the new one is known to be complete.
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
-    for (const name of await caches.keys()) {
-      if (name.startsWith('gma-frame-shell-') && name !== SHELL_CACHE) await caches.delete(name);
+    if (await shellComplete(SHELL_CACHE)) {
+      for (const name of await caches.keys()) {
+        if (name.startsWith(SHELL_PREFIX) && name !== SHELL_CACHE) await caches.delete(name);
+      }
     }
     await self.clients.claim();
   })());
@@ -83,8 +108,18 @@ async function shell(request) {
     if (res.ok && res.type === 'basic') cache.put(request, res.clone());
     return res;
   } catch {
-    return (await cache.match(request)) ?? new Response('', { status: 504 });
+    return (await cache.match(request)) ?? (await savedShell(request)) ?? new Response('', { status: 504 });
   }
+}
+
+/** A shell file from any saved version: better an older file than a blank frame. */
+async function savedShell(request) {
+  const names = (await caches.keys()).filter((n) => n.startsWith(SHELL_PREFIX) && n !== SHELL_CACHE);
+  for (const name of names.reverse()) {
+    const hit = await (await caches.open(name)).match(request);
+    if (hit) return hit;
+  }
+  return undefined;
 }
 
 /**
@@ -104,7 +139,7 @@ async function page(request, url) {
     if (!pairing && res.status === 200 && res.type === 'basic' && !res.redirected) cache.put(FRAME_PAGE, res.clone());
     return res;
   } catch {
-    const saved = await cache.match(FRAME_PAGE);
+    const saved = (await cache.match(FRAME_PAGE)) ?? (await savedShell(FRAME_PAGE));
     if (saved) return pairing ? Response.redirect(FRAME_PAGE, 302) : saved;
     return offlinePage();
   }
@@ -142,30 +177,102 @@ async function frameState(request) {
 }
 
 // ---------- the media index (LRU bookkeeping), one writer at a time ----------
+// The index lives in memory; a cache hit only moves a timestamp there. It is
+// written to the cache (the Pi's SD card) a couple of seconds after a burst of
+// use settles, so one write holds the whole burst: for timestamps alone at most
+// every INDEX_SAVE_MS, when files joined or left every time, and when the page
+// goes away. Nothing is lost for good if the worker stops first: when the index
+// is loaded it is checked against what is really cached, so a file it never
+// heard of is adopted (dated by its server response) and an entry whose file is
+// gone is dropped.
 
+const INDEX_SAVE_MS = 10 * 60_000;
+const INDEX_SETTLE_MS = 2000;
 let index = null;
+let indexDirty = false;
+let indexSavedAt = 0; // kept in the saved index, so the pace holds across worker restarts
+let indexTimer = null;
 let indexQueue = Promise.resolve();
 
+async function loadIndex(cache) {
+  if (index) return index;
+  const saved = await (await cache.match(INDEX_KEY))?.json().catch(() => null);
+  const entries = Array.isArray(saved) ? saved : Array.isArray(saved?.entries) ? saved.entries : [];
+  indexSavedAt = Number(saved?.saved_at) || 0;
+  const keys = new Set((await cache.keys()).map((k) => (typeof k === 'string' ? k : k.url)).filter((u) => u !== INDEX_KEY));
+  const list = entries.filter((e) => e && keys.has(e.url));
+  const known = new Set(list.map((e) => e.url));
+  for (const url of keys) {
+    const kind = mediaKind(new URL(url).pathname);
+    if (!kind || known.has(url)) continue;
+    const headers = (await cache.match(url))?.headers;
+    list.push({
+      url, kind,
+      bytes: Number(headers?.get('Content-Length')) || 0,
+      used_at: Date.parse(headers?.get('Date') ?? '') || 0,
+    });
+  }
+  index = list;
+  indexDirty = list.length !== entries.length;
+  return index;
+}
+
+async function saveIndex() {
+  if (!index || !indexDirty) return;
+  const cache = await caches.open(MEDIA_CACHE);
+  indexSavedAt = Date.now();
+  indexDirty = false;
+  await cache.put(INDEX_KEY, new Response(JSON.stringify({ saved_at: indexSavedAt, entries: index }), {
+    headers: { 'Content-Type': 'application/json' },
+  }));
+}
+
+/** Save once use has settled: a change of files always, timestamps only if the last save was a while ago. */
+function saveIndexLater(filesChanged) {
+  if (!filesChanged && Date.now() - indexSavedAt < INDEX_SAVE_MS) return;
+  clearTimeout(indexTimer);
+  indexTimer = setTimeout(() => { indexTimer = null; flushIndex(); }, INDEX_SETTLE_MS);
+  indexTimer.unref?.();
+}
+
+/** fn(list) changes the index in memory; it returns {joined, evict: [urls]}. */
 function updateIndex(fn) {
   indexQueue = indexQueue.then(async () => {
     const cache = await caches.open(MEDIA_CACHE);
-    if (!index) index = (await (await cache.match(INDEX_KEY))?.json().catch(() => null)) ?? [];
-    const evict = fn(index) ?? [];
+    await loadIndex(cache);
+    const { joined = false, evict = [] } = fn(index) ?? {};
     for (const url of evict) await cache.delete(url);
     if (evict.length) index = index.filter((e) => !evict.includes(e.url));
-    await cache.put(INDEX_KEY, new Response(JSON.stringify(index), { headers: { 'Content-Type': 'application/json' } }));
+    indexDirty = true;
+    saveIndexLater(joined || evict.length > 0);
   }).catch(() => {});
+  return indexQueue;
+}
+
+/** Write what is unsaved now (the page asks when it goes away). */
+function flushIndex() {
+  clearTimeout(indexTimer);
+  indexTimer = null;
+  indexQueue = indexQueue.then(saveIndex).catch(() => {});
   return indexQueue;
 }
 
 function touch(url, kind, bytes) {
   return updateIndex((list) => {
     const found = list.find((e) => e.url === url);
-    if (found) found.used_at = Date.now();
-    else list.push({ url, kind, bytes, used_at: Date.now() });
-    return found ? [] : planEvictions(list, LIMITS);
+    if (found) {
+      found.used_at = Date.now();
+      if (bytes && !found.bytes) found.bytes = bytes;
+      return { joined: false };
+    }
+    list.push({ url, kind, bytes, used_at: Date.now() });
+    return { joined: true, evict: planEvictions(list, LIMITS) };
   });
 }
+
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'gma-save-index') event.waitUntil?.(flushIndex());
+});
 
 // ---------- photos ----------
 

@@ -1,4 +1,7 @@
-// GET /healthz: is the app up, can it read the database, when did the worker last check in.
+// GET /healthz: is the app up, can it read the database, is the photo drive
+// still there, and when did the worker last check in. Docker's healthcheck
+// calls it, so a dropped drive (its .gma-media sentinel gone) turns the app
+// unhealthy (503) where Ben and `docker compose ps` can see it.
 
 import { getSetting } from '../lib/settings.js';
 
@@ -12,8 +15,11 @@ export default async function healthRoutes(app) {
     } catch (err) {
       request.log.error({ err }, 'Health check could not read the database');
     }
+    const mediaOk = app.storage.isMounted();
+    if (!mediaOk) request.log.error('Health check: the photo drive is gone (its sentinel file is missing)');
+    const ok = dbOk && mediaOk;
     reply.header('cache-control', 'no-store');
-    reply.code(dbOk ? 200 : 503);
-    return { ok: dbOk, db: dbOk, worker_last_seen: workerLastSeen };
+    reply.code(ok ? 200 : 503);
+    return { ok, db: dbOk, media: mediaOk, worker_last_seen: workerLastSeen };
   });
 }

@@ -53,8 +53,21 @@ export function detectInAppBrowser(ua = '', { standalone = false } = {}) {
 // no Add to Home Screen; the way out is Safari's compass button.
 export const IOS_INSIDE_APP_STEP = 'Don’t see Add to Home Screen? You may be inside another app. Tap the Safari compass at the bottom (or ••• then Open in Safari), and try again there.';
 
+// Gmail's or Facebook's built-in browser has no Add to Home Screen, and it isn't
+// always detectable, so every phone guide offers the link to paste elsewhere.
+function copyLinkFor(os) {
+  const browser = os === 'ios' ? 'Safari' : 'Chrome';
+  return { browser, hint: `Reading this inside Gmail, Facebook or another app? Tap Copy link, open ${browser} and paste it into the address bar.` };
+}
+
 /** Steps to put the app on the Home Screen, for the platform detected above. */
-export function installGuide(platform, { canPrompt = false } = {}) {
+export function installGuide(platform, options = {}) {
+  const guide = phoneGuide(platform, options);
+  if (platform.standalone || (platform.os !== 'ios' && platform.os !== 'android')) return guide;
+  return { ...guide, copyLink: copyLinkFor(platform.os) };
+}
+
+function phoneGuide(platform, { canPrompt = false } = {}) {
   if (platform.standalone) return { kind: 'installed', steps: [] };
   if (platform.os === 'ios') {
     if (platform.browser === 'safari' && (platform.safariVersion ?? 0) >= 26) {

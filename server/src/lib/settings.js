@@ -2,6 +2,8 @@
 // Defaults for the frame live in the 001 migration; DEFAULT_SETTINGS mirrors
 // them so a missing row still reads sensibly.
 
+import { immediate } from './tx.js';
+
 export const DEFAULT_SETTINGS = Object.freeze({
   night_start: '21:00',
   night_end: '07:00',
@@ -44,8 +46,7 @@ export function getSettings(db, keys = null) {
 }
 
 export function setSettings(db, values) {
-  const write = db.transaction((entries) => {
+  immediate(db, (entries) => {
     for (const [key, value] of entries) setSetting(db, key, value);
-  });
-  write(Object.entries(values));
+  }, Object.entries(values));
 }

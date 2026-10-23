@@ -28,3 +28,12 @@ export function describeSeconds(totalSeconds) {
   if (!minutes) return part(seconds, 'second');
   return seconds ? `${part(minutes, 'minute')} ${part(seconds, 'second')}` : part(minutes, 'minute');
 }
+
+// errno codes that mean the media drive (or a file on it) went away, not that
+// the photo or video is bad: a USB drive that dropped gives EIO, a remount
+// ENOENT or ESTALE. These are retried, never turned into a permanent failure.
+export const MEDIA_IO_CODES = Object.freeze(['EIO', 'ENOENT', 'ENXIO', 'ESTALE', 'ENODEV', 'ENOTCONN']);
+
+export function mediaIoError(err) {
+  return MEDIA_IO_CODES.includes(err?.code);
+}

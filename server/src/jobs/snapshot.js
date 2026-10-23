@@ -17,6 +17,7 @@ import Database from 'better-sqlite3';
 import { DEFAULT_SETTINGS, getSetting, setSetting } from '../lib/settings.js';
 import { assertMediaMounted } from '../lib/storage.js';
 import { clockInZone } from '../lib/time.js';
+import { immediate } from '../lib/tx.js';
 
 export const SNAPSHOT_TIME = '03:15';
 export const SNAPSHOTS_KEPT = 7;
@@ -58,14 +59,12 @@ export function dueDay(db, now = Date.now()) {
 
 // Takes the day's claim, unless another worker holds a live one or already finished.
 function claim(db, day, now) {
-  return db
-    .transaction(() => {
-      const held = getSetting(db, 'snapshot_claim', null);
-      if (held?.day === day && (held.done || now - held.at < CLAIM_TTL_MS)) return false;
-      setSetting(db, 'snapshot_claim', { day, at: now, done: false });
-      return true;
-    })
-    .immediate();
+  return immediate(db, () => {
+    const held = getSetting(db, 'snapshot_claim', null);
+    if (held?.day === day && (held.done || now - held.at < CLAIM_TTL_MS)) return false;
+    setSetting(db, 'snapshot_claim', { day, at: now, done: false });
+    return true;
+  });
 }
 
 // Copies the live database to `dest` and makes the copy a single self-contained
@@ -126,11 +125,11 @@ export async function snapshotIfDue({ db, config, log = null, now = Date.now(), 
 
   const { size } = await fs.stat(finalPath);
   const record = { day, file: `${BACKUPS_DIR}/${name}`, bytes: size, at: Date.now() };
-  db.transaction(() => {
+  immediate(db, () => {
     setSetting(db, 'last_snapshot_at', record.at);
     setSetting(db, 'last_snapshot', record);
     setSetting(db, 'snapshot_claim', { day, at: now, done: true });
-  })();
+  });
 
   try {
     const removed = await pruneSnapshots(dir, { now });

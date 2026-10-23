@@ -17,7 +17,8 @@ Cloudflare Tunnel. The frontend is plain JavaScript modules and CSS, with no bui
 ```
 server/   the app, the worker, the CLIs (server/scripts) and their tests
 web/      the family PWA (index.html, app/) and Grandma's frame (grandma/)
-deploy/   the tunnel's config and runbooks (cloudflared.yml, cloudflared.md, backup.md)
+deploy/   the tunnel's config and runbooks (cloudflared.yml, cloudflared.md, backup.md),
+          and the server CI (ci-on-server.sh, ci/)
 docker-compose.yml, Dockerfile   the deployment (app, worker, tunnel)
 pi/       the frame's kiosk setup (Raspberry Pi 4)
 ```
@@ -62,10 +63,22 @@ npm run -s vapid:gen -- --subject mailto:ben@example.com   # web push keys, once
 ```sh
 cd server && npm test      # node --test with fastify.inject; temp dirs, no ports, no network
 cd web && npm test         # the pure frontend modules
+cd web && npm run e2e      # Playwright (headless shell) against the real app and worker on 127.0.0.1:8787
 ```
 
-Media tests skip the ffmpeg and heif cases when those tools are missing; inside
-the Docker image they all run.
+Media tests skip the ffmpeg and heif cases when those tools are missing. To run
+everything in the real image, with ffmpeg and heif-dec present, use the server CI
+from a Mac checkout:
+
+```sh
+bash deploy/ci-on-server.sh --dry-run   # what it would run on Ben's Debian box
+bash deploy/ci-on-server.sh             # build gma:ci, the server suite inside it (no test may skip), the media smoke test
+```
+
+It works only under `/home/ben/gma-ci` with throwaway `gma-ci` containers, network
+and volumes, publishes no ports, uses no sudo, and cleans up after itself. The smoke
+test times every job, including a 5-second 4K HDR clip (about 16 s at the worker's
+3 CPUs).
 
 ## Deploy (Ben's Debian box)
 
@@ -107,7 +120,7 @@ mounted, the app and the worker refuse to start rather than write photos to the 
    ```sh
    docker compose up -d --build
    docker compose ps                                # app and worker "healthy", tunnel "Up"
-   curl -s http://127.0.0.1:3064/healthz            # {"ok":true,"db":true,…}
+   curl -s http://127.0.0.1:3064/healthz            # {"ok":true,"db":true,"media":true,…}
    ```
 4. Make Ben the admin:
    ```sh
@@ -132,14 +145,23 @@ Updating:
 cd /home/ben/gma && git pull && docker compose up -d --build
 ```
 
-Migrations run when the app starts. Logs: `docker compose logs -f app worker`.
-Health: `https://gma.4mn.org/healthz`, and `/admin` → The frame shows the queue,
-failed jobs, free disk and when the frame was last seen.
+Migrations run when the app starts. Before an upgrade migrates the database, the
+app copies it to `/mnt/seagate/gma/media/backups/pre-<migration>-<time>.sqlite`
+(and refuses to start if it can't), so a bad migration can be undone; delete old
+copies by hand. Logs: `docker compose logs -f app worker`.
+Health: `https://gma.4mn.org/healthz` (503 with `"media":false` if the drive drops
+while running), and `/admin` → The frame shows the queue, failed jobs, free disk,
+the upload limits and when the frame was last seen.
 
 If the drive isn't mounted, the app and the worker don't start: Docker can't
 find `/mnt/seagate/gma/media` (`docker compose up` says so), or the app finds no
 `.gma-media` file there and stops with a line saying so (`docker compose logs app`).
 Docker doesn't retry by itself, so once the drive is back at `/mnt/seagate`, run
 `docker compose up -d`.
+
+If the drive drops while gma is running, the app reports unhealthy and the worker
+stops taking jobs (nothing queued is lost). Once the drive is mounted again, run
+`docker compose down && docker compose up -d`: the containers keep the dead mount
+until they are recreated. Details: [`deploy/backup.md`](deploy/backup.md).
 
 The nginx site in `deploy/nginx/` is an optional note only; the tunnel doesn't use it.

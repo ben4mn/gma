@@ -251,8 +251,14 @@ describe('the photo drive sentinel', () => {
   }
 });
 
-describe('deployment files', () => {
-  const compose = read('docker-compose.yml');
+// Inside the Docker image these files aren't there (.dockerignore keeps them
+// out), so the checks skip rather than fail; deploy/ci-on-server.sh mounts them.
+const DEPLOY_FILES = Object.freeze(['docker-compose.yml', 'Dockerfile', '.env.example', 'deploy/cloudflared.yml']);
+const missingDeployFiles = DEPLOY_FILES.filter((rel) => !fs.existsSync(path.join(REPO, rel)));
+const deploySkip = missingDeployFiles.length ? `not in this checkout (inside the image?): ${missingDeployFiles.join(', ')}` : false;
+
+describe('deployment files', { skip: deploySkip }, () => {
+  const compose = deploySkip ? '' : read('docker-compose.yml');
 
   test('one compose file, at the repo root', () => {
     assert.equal(fs.existsSync(path.join(REPO, 'deploy', 'docker-compose.yml')), false);

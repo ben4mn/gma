@@ -53,3 +53,14 @@ test('iPhone push only in the installed app', () => {
   assert.equal(canOfferPush(detectPlatform(UA.android), true), true);
   assert.equal(canOfferPush(detectPlatform(UA.android), false), false);
 });
+
+test('every phone guide offers Copy link for in-app browsers; installed and desktop do not', () => {
+  for (const [ua, browser] of [[UA.safari26, 'Safari'], [UA.safari17, 'Safari'], [UA.android, 'Chrome']]) {
+    const guide = installGuide(detectPlatform(ua));
+    assert.equal(guide.copyLink?.browser, browser, ua);
+    assert.match(guide.copyLink.hint, new RegExp(`Copy link.*${browser}`));
+  }
+  assert.equal(installGuide(detectPlatform(UA.android), { canPrompt: true }).copyLink?.browser, 'Chrome');
+  assert.equal(installGuide(detectPlatform(UA.safari17, { standalone: true })).copyLink, undefined);
+  assert.equal(installGuide(detectPlatform('Mozilla/5.0 (Windows NT 10.0)')).copyLink, undefined);
+});

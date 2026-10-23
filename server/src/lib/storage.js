@@ -87,6 +87,17 @@ export function createStorage(mediaDir, { sentinel = '' } = {}) {
     uploadsDir: dirs.uploads,
     backupsDir: dirs.backups,
 
+    // False when the sentinel has gone (the drive dropped or was unplugged
+    // while running). Always true when no sentinel is configured.
+    isMounted() {
+      if (!sentinel) return true;
+      try {
+        return fsSync.existsSync(safeJoin(root, sentinel));
+      } catch {
+        return false;
+      }
+    },
+
     async init() {
       assertMediaMounted(root, sentinel);
       await Promise.all(Object.values(dirs).map((dir) => fs.mkdir(dir, { recursive: true })));
