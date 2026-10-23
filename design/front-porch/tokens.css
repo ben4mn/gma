@@ -1,0 +1,102 @@
+/* Front Porch — design tokens.
+   Big, bright and unmistakable, like a good TV remote.
+   Every colour is a plain hex so contrast can be checked by hand or by tool.
+   Contrast ratios (WCAG 2.x) are noted against the colour the text usually sits on. */
+
+/* Atkinson Hyperlegible Next (Braille Institute), SIL OFL 1.1 — fonts/OFL.txt.
+   One variable file covers weights 200–800. Self-hosted: nothing leaves file://. */
+@font-face {
+  font-family: "Atkinson Hyperlegible Next";
+  src: url("fonts/AtkinsonHyperlegibleNext-latin.woff2") format("woff2");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: block;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
+    U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Atkinson Hyperlegible Next";
+  src: url("fonts/AtkinsonHyperlegibleNext-latin-ext.woff2") format("woff2");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: block;
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113,
+    U+2C60-2C7F, U+A720-A7FF;
+}
+
+:root {
+  --font: "Atkinson Hyperlegible Next", "Atkinson Hyperlegible", system-ui, sans-serif;
+
+  /* ---- Palette: day ---------------------------------------------------- */
+  --bg:          #FFFFFF; /* page */
+  --surface:     #F1F3F6; /* the right rail, quiet plates */
+  --surface-2:   #E3E7ED; /* pressed key, dividers on surface */
+  --ink:         #0F1419; /* text + every outline. 18.51:1 on bg, 16.65:1 on surface */
+  --ink-2:       #3D4652; /* secondary text. 9.56:1 on bg, 8.60:1 on surface */
+  --on-color:    #FFFFFF; /* text on solid colour tiles */
+
+  --primary:     #0A47C2; /* the one action colour: send, upload, play. white text 7.80:1 */
+  --primary-ink: #0A47C2; /* blue as text on white: 7.80:1 (7.01:1 on surface) */
+  --primary-soft:#E7EEFC; /* blue tint plate (family: her voice message). ink 15.90:1, ink-2 8.21:1 */
+
+  /* Reactions: each a solid tile with its own word. */
+  --love:        #A8102A; /* white text 7.57:1 */
+  --funny:       #F5B400; /* ink text 10.06:1 */
+  --wow:         #5E3593; /* white text 8.73:1 */
+  --thankful:    #0A6150; /* white text 7.40:1 */
+  --love-ink:    #FFFFFF;
+  --funny-ink:   #0F1419;
+  --wow-ink:     #FFFFFF;
+  --thankful-ink:#FFFFFF;
+
+  /* ---- Palette: night (Grandma's screen after dark) ---------------------- */
+  --n-bg:        #000000; /* true black: the panel emits almost nothing */
+  --n-surface:   #14171C; /* rail at night. white text 18.0:1 */
+  --n-ink:       #FFFFFF; /* 21:1 on n-bg */
+  --n-ink-2:     #B8BEC8; /* 11.24:1 on n-bg */
+  --n-line:      #8A93A1; /* outlines at night: visible, not glaring (6.77:1 vs black) */
+  --n-primary:   #123E8C; /* dimmed blue, white text 10.03:1 */
+  --n-love:      #7A0C1F; /* white text 11.05:1 */
+  --n-funny:     #B88A00; /* black text 6.67:1 (large bold labels need 4.5:1) */
+  --n-funny-ink: #000000;
+  --n-wow:       #3F2466; /* white text 12.68:1 */
+  --n-thankful:  #074A3D; /* white text 10.21:1 */
+  --n-photo:     0.55;    /* photo brightness at night */
+
+  /* ---- Grandma type scale (1280x800 at arm's length) -------------------- */
+  --g-hero:      48px;  /* "Sent to Sarah", the Play key */
+  --g-display:   46px;  /* the clock */
+  --g-title:     42px;  /* top-bar line, confirmation headline */
+  --g-preset:    36px;  /* the eight preset messages */
+  --g-reaction:  34px;  /* Love / Funny / Wow / Thankful */
+  --g-label:     32px;  /* big key words: Home, Send a message, Play */
+  --g-body:      32px;  /* captions: the family's own words */
+  --g-item:      32px;  /* rail items: "from Sarah" */
+  --g-key2:      28px;  /* two-line key words, second lines on plates */
+  --g-small:     26px;  /* date, "This morning", second lines */
+  --g-tiny:      24px;  /* Previous / Next under their arrows (the floor is 20) */
+
+  /* ---- Family type scale (390x844 phone) -------------------------------- */
+  --f-title:     32px;
+  --f-heading:   20px;
+  --f-body:      17px;
+  --f-label:     17px;
+  --f-meta:      15px;
+  --f-tab:       14px;
+
+  /* ---- Spacing, radii, lines ------------------------------------------- */
+  --s-1: 4px;  --s-2: 8px;  --s-3: 12px; --s-4: 16px;
+  --s-5: 24px; --s-6: 32px; --s-7: 48px;
+
+  --r-sm: 12px;
+  --r-md: 20px;
+  --r-lg: 28px;
+  --r-pill: 999px;
+
+  --g-line: 4px;   /* Grandma outlines */
+  --g-lip:  6px;   /* the solid "key base" under everything you can press */
+  --f-line: 3px;   /* family outlines */
+  --f-lip:  4px;
+}

@@ -1,0 +1,142 @@
+{
+  "home": {
+    "issues": [],
+    "overImage": [],
+    "measured": 16,
+    "taps": 7
+  },
+  "home-offline": {
+    "issues": [],
+    "overImage": [
+      {
+        "text": "No Wi-Fi right now. Showing your saved p",
+        "size": 24,
+        "over": "img",
+        "scrimLayers": 1,
+        "shadow": false
+      },
+      {
+        "text": "10:42",
+        "size": 52,
+        "over": "img",
+        "scrimLayers": 1,
+        "shadow": false
+      },
+      {
+        "text": "am",
+        "size": 34,
+        "over": "img",
+        "scrimLayers": 1,
+        "shadow": false
+      },
+      {
+        "text": "Tuesday, October 21",
+        "size": 24,
+        "over": "img",
+        "scrimLayers": 1,
+        "shadow": false
+      },
+      {
+        "text": "From Jake \u00b7 Sunday",
+        "size": 22,
+        "over": "img",
+        "scrimLayers": 1,
+        "shadow": false
+      },
+      {
+        "text": "Pickles had a lazy Sunday.",
+        "size": 28,
+        "over": "img",
+        "scrimLayers": 1,
+        "shadow": false
+      }
+    ],
+    "measured": 11,
+    "taps": 7
+  },
+  "home-night": {
+    "issues": [],
+    "overImage": [
+      {
+        "text": "10:42",
+        "size": 184,
+        "over": "img",
+        "scrimLayers": 0,
+        "shadow": true
+      },
+      {
+        "text": "pm",
+        "size": 60,
+        "over": "img",
+        "scrimLayers": 0,
+        "shadow": true
+      },
+      {
+        "text": "Tuesday, October 21",
+        "size": 36,
+        "over": "img",
+        "scrimLayers": 0,
+        "shadow": true
+      },
+      {
+        "text": "Good night.",
+        "size": 28,
+        "over": "img",
+        "scrimLayers": 0,
+        "shadow": true
+      }
+    ],
+    "measured": 2,
+    "taps": 2
+  },
+  "photo": {
+    "issues": [],
+    "overImage": [],
+    "measured": 14,
+    "taps": 8
+  },
+  "photo-presets": {
+    "issues": [],
+    "overImage": [],
+    "measured": 13,
+    "taps": 10
+  },
+  "photo-sent": {
+    "issues": [],
+    "overImage": [],
+    "measured": 16,
+    "taps": 8
+  },
+  "photo-video": {
+    "issues": [],
+    "overImage": [],
+    "measured": 16,
+    "taps": 9
+  },
+  "family": {
+    "issues": [],
+    "overImage": [
+      {
+        "text": "Video \u00b7 1:04",
+        "size": 14,
+        "over": "img",
+        "scrimLayers": 1,
+        "shadow": false
+      }
+    ],
+    "measured": 18,
+    "taps": 5
+  },
+  "family-grandma": {
+    "issues": [],
+    "overImage": [],
+    "measured": 29,
+    "taps": 4
+  },
+  "family-mine": {
+    "issues": [],
+    "overImage": [],
+    "measured": 23,
+    "taps": 5
+  }
+}

@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1280, height=800, initial-scale=1">
+<title>Home · Heirloom</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  html, body { width: 1280px; height: 800px; overflow: hidden; }
+
+  /* ---------- the header's quiet status line (offline, night) ---------- */
+  .status {
+    display: none;
+    margin: 0;
+    align-items: center;
+    gap: 14px;
+    padding: 0 26px 0 20px;
+    height: 64px;
+    border-radius: var(--radius-pill);
+    background: var(--card);
+    box-shadow: var(--shadow-press);
+    font-size: var(--g-small);
+    font-weight: 600;
+    color: var(--ink);
+    white-space: nowrap;
+  }
+  .status svg { width: 34px; height: 34px; flex: none; color: var(--ink-muted); }
+  :root[data-state="offline"] .status--offline,
+  :root[data-state="night"] .status--night { display: inline-flex; }
+  :root[data-state="night"] .status--night svg { color: var(--gold); }
+
+
+  /* ---------- the stage: the slideshow on the left, what's new on the right ---------- */
+  .stage {
+    position: absolute;
+    top: 144px; left: var(--edge); right: var(--edge); bottom: 24px;
+    display: grid;
+    grid-template-columns: 1fr 472px;
+    gap: 44px;
+  }
+
+  /* The slideshow print. It is never rotated. */
+  .hero {
+    position: relative;
+    display: grid;
+    align-items: center;
+    justify-items: center;
+    min-height: 0;
+  }
+  .slide { display: none; }
+  .slide.is-on { display: grid; }
+  .slide.is-on.fade-in { animation: develop 1.6s ease-out both; }
+  @keyframes develop { from { opacity: 0; } to { opacity: 1; } }
+
+  .print--hero { padding: var(--mat-hero); }
+
+  /* portrait: the print stands tall, its note card beside it (a split layout,
+     never a stretched crop) */
+  .slide--portrait {
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    gap: 36px;
+    width: 100%;
+  }
+  .slide--portrait .print--hero { width: 404px; height: 596px; }
+  .note {
+    position: relative;
+    background: var(--card);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+    padding: 30px 28px 32px;
+    align-self: center;
+    margin-top: 60px;
+  }
+  .note::before { /* a strip of paper tape holding the note to the table */
+    content: ""; position: absolute; top: -14px; left: 50%; width: 112px; height: 30px;
+    transform: translateX(-50%) rotate(-3deg);
+    background: rgba(217, 184, 119, 0.55);
+    box-shadow: 0 1px 2px rgba(43,33,25,.12);
+  }
+  :root[data-state="night"] .note::before { background: rgba(110, 85, 48, 0.6); }
+  .note-from { margin: 0; font-size: var(--g-small); font-weight: 600; color: var(--ink-muted); }
+  .note-name {
+    margin: 2px 0 0;
+    font-family: var(--font-serif); font-variation-settings: var(--serif-soft);
+    font-size: var(--g-title); font-weight: 600; line-height: 1.05; color: var(--ink);
+  }
+  .note-when { margin: 8px 0 0; font-size: var(--g-small); font-weight: 600; color: var(--ink-muted); }
+  .note-rule { display: block; width: 56px; height: 3px; margin: 20px 0 18px; background: var(--gold-soft); border-radius: 2px; }
+  .note-text {
+    margin: 0;
+    font-family: var(--font-serif); font-variation-settings: var(--serif-soft);
+    font-size: var(--g-body); font-weight: 400; line-height: 1.3; color: var(--ink);
+  }
+
+  /* landscape: one wide print, the words written on its mat */
+  .slide--landscape { width: 100%; }
+  .slide--landscape .print--hero { width: 100%; padding-bottom: 0; }
+  .slide--landscape .photo { height: 446px; }
+  .mat-caption {
+    display: flex; align-items: baseline; gap: 22px;
+    height: 104px; padding: 0 6px;
+  }
+  .mat-caption .who {
+    flex: none;
+    font-family: var(--font-serif); font-variation-settings: var(--serif-soft);
+    font-size: 40px; font-weight: 600; color: var(--ink);
+  }
+  .mat-caption .what {
+    font-family: var(--font-serif); font-variation-settings: var(--serif-soft);
+    font-size: var(--g-body); line-height: 1.25; color: var(--ink);
+  }
+  .mat-caption .when { margin-left: auto; flex: none; font-size: var(--g-small); font-weight: 600; color: var(--ink-muted); }
+  .mat-caption { align-items: center; }
+
+  /* ---------- New for you ---------- */
+  .new { display: flex; flex-direction: column; min-height: 0; }
+  .new-title {
+    display: flex; align-items: center; gap: 18px;
+    margin: 0 0 16px;
+    font-family: var(--font-serif); font-variation-settings: var(--serif-soft);
+    font-size: var(--g-heading); font-weight: 600; line-height: 1; color: var(--ink);
+  }
+  .new-title::after { content: ""; flex: 1; height: 2px; background: var(--gold-soft); border-radius: 2px; margin-top: 6px; }
+
+  .pcard {
+    display: grid;
+    grid-template-columns: 152px 1fr;
+    align-items: center;
+    gap: 22px;
+    height: 128px;
+    padding: 0 20px 0 14px;
+    margin-bottom: 14px;
+    background: var(--card);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+  }
+  .pcard:active { box-shadow: var(--shadow-press); transform: translateY(1px); }
+  .pcard-art { position: relative; height: 100px; display: grid; place-items: center; }
+  .pcard-art .print { width: 138px; height: 96px; padding: 6px; }
+  .pcard-title {
+    display: block;
+    font-family: var(--font-serif); font-variation-settings: var(--serif-soft);
+    font-size: var(--g-card); font-weight: 600; line-height: 1.08; color: var(--ink);
+  }
+  .pcard-meta { display: block; margin-top: 8px; font-size: var(--g-small); font-weight: 600; color: var(--ink-muted); }
+  .pcard-quote {
+    display: block; margin-top: 6px;
+    font-family: var(--font-serif); font-variation-settings: var(--serif-soft);
+    font-size: var(--g-small); font-weight: 450; line-height: 1.15; color: var(--ink-muted);
+  }
+  /* video badge: a solid plate, so it reads on any poster */
+  .play-badge {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: 50px; height: 50px; border-radius: 50%;
+    display: grid; place-items: center;
+    background: var(--terracotta); color: var(--cream);
+    box-shadow: 0 2px 6px rgba(43,33,25,.35);
+  }
+  .play-badge svg { width: 22px; height: 22px; margin-left: 3px; }
+  /* a small stack of three prints: the only tilted photos, and only a little */
+  .stack .print { position: absolute; width: 120px; height: 84px; padding: 5px; }
+  .stack .print:nth-child(1) { transform: translate(-14px, -6px) rotate(-7deg); }
+  .stack .print:nth-child(2) { transform: translate(12px, -4px) rotate(5deg); }
+  .stack .print:nth-child(3) { transform: translate(0, 6px) rotate(-1deg); }
+
+  /* ---------- Message to the whole family ---------- */
+  .voice {
+    position: relative;
+    display: grid;
+    grid-template-columns: 128px 1fr;
+    align-items: center;
+    gap: 22px;
+    flex: 1;
+    min-height: 0;
+    margin-top: 6px;
+    padding: 0 22px 0 18px;
+    border-radius: var(--radius-card);
+    background: var(--terracotta);
+    color: var(--cream);
+    box-shadow: var(--shadow-card);
+  }
+  .voice:active { background: var(--terracotta-press); box-shadow: var(--shadow-press); }
+  .voice .print { width: 128px; height: 104px; padding: 6px; transform: rotate(-2.5deg); }
+  .voice-label { display: flex; align-items: center; gap: 16px; }
+  .voice-mic {
+    flex: none; width: 58px; height: 58px; border-radius: 50%;
+    display: grid; place-items: center;
+    background: var(--cream); color: var(--terracotta);
+  }
+  .voice-mic svg { width: 32px; height: 32px; }
+  .voice-text { font-size: var(--g-label); font-weight: 700; line-height: 1.15; }
+
+  /* at night the family button steps back: a deeper rust, night-ink words, a softer mic disc */
+  :root[data-state="night"] .voice { background: #4A200F; color: #F3E8D6; }
+  :root[data-state="night"] .voice-mic { background: #D9C8B0; color: #4A200F; }
+  :root[data-state="night"] .play-badge { background: var(--terracotta-press); color: #F3E8D6; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="home-btn" data-home href="home.html" aria-current="page">
+    <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19.5 20 7l15 12.5"/><path d="M9.5 16.5V34h21V16.5"/><path d="M17 34v-9h6v9"/></svg>
+    Home
+  </a>
+
+  <p class="status status--offline">
+    <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 30h18a7 7 0 0 0 1-13.9A10 10 0 0 0 11.2 15 7.5 7.5 0 0 0 11 30Z"/><path d="M6 6l28 28"/></svg>
+    No internet right now. Your saved photos keep showing.
+  </p>
+  <p class="status status--night">
+    <svg viewBox="0 0 40 40" fill="currentColor" aria-hidden="true"><path d="M27.5 27.8A13 13 0 0 1 16.3 6.2a14 14 0 1 0 17.5 17.4 13 13 0 0 1-6.3 4.2Z"/></svg>
+    Good evening. The slideshow rests until morning.
+  </p>
+
+  <div class="clock" aria-label="Today">
+    <span class="clock-date">Tuesday, October 21</span>
+    <span class="clock-time" data-time-day="10:42 am" data-time-night="9:30 pm">10:42 am</span>
+  </div>
+</header>
+
+<main class="stage">
+  <!-- The slideshow. Each slide is one print; tapping it opens the photo. -->
+  <div class="hero" id="slideshow" aria-live="off">
+
+    <a class="slide slide--portrait" href="photo.html" data-slide="0">
+      <figure class="print print--hero" style="margin:0">
+        <img src="../assets/photos/p64.jpg" alt="Sarah in a summer field holding a bunch of chamomile" style="object-position:50% 30%">
+        <i class="corner tl"></i><i class="corner tr"></i><i class="corner br"></i><i class="corner bl"></i>
+      </figure>
+      <div class="note">
+        <p class="note-from">From</p>
+        <p class="note-name">Mike</p>
+        <p class="note-when">Saturday</p>
+        <span class="note-rule" aria-hidden="true"></span>
+        <p class="note-text">Sarah picked chamomile for your tea.</p>
+      </div>
+    </a>
+
+    <a class="slide slide--portrait" href="photo.html" data-slide="1">
+      <figure class="print print--hero" style="margin:0">
+        <img src="../assets/photos/p1003.jpg" alt="A young deer in autumn woods" style="object-position:50% 60%">
+        <i class="corner tl"></i><i class="corner tr"></i><i class="corner br"></i><i class="corner bl"></i>
+      </figure>
+      <div class="note">
+        <p class="note-from">From</p>
+        <p class="note-name">Aunt Carol</p>
+        <p class="note-when">Sunday</p>
+        <span class="note-rule" aria-hidden="true"></span>
+        <p class="note-text">A little visitor in the woods behind my house.</p>
+      </div>
+    </a>
+
+    <a class="slide slide--landscape" href="photo.html" data-slide="2">
+      <figure class="print print--hero" style="margin:0">
+        <img class="photo" src="../assets/photos/p835.jpg" alt="Almond cookies in a bowl beside daffodils and lemon slices">
+        <figcaption class="mat-caption">
+          <span class="who">Sarah</span>
+          <span class="what">Lily baked your cookies!</span>
+          <span class="when">Sunday</span>
+        </figcaption>
+        <i class="corner tl"></i><i class="corner tr"></i><i class="corner br"></i><i class="corner bl"></i>
+      </figure>
+    </a>
+
+    <a class="slide slide--landscape" href="photo.html" data-slide="3">
+      <figure class="print print--hero" style="margin:0">
+        <img class="photo" src="../assets/photos/p129.jpg" alt="Two people on a bench looking at the bay" style="object-position:50% 70%">
+        <figcaption class="mat-caption">
+          <span class="who">Mike</span>
+          <span class="what">Our old bench by the water.</span>
+          <span class="when">Yesterday</span>
+        </figcaption>
+        <i class="corner tl"></i><i class="corner tr"></i><i class="corner br"></i><i class="corner bl"></i>
+      </figure>
+    </a>
+
+    <a class="slide slide--portrait" href="photo.html" data-slide="4">
+      <figure class="print print--hero" style="margin:0">
+        <img src="../assets/photos/p660.jpg" alt="Hands holding a sparkler">
+        <i class="corner tl"></i><i class="corner tr"></i><i class="corner br"></i><i class="corner bl"></i>
+      </figure>
+      <div class="note">
+        <p class="note-from">From</p>
+        <p class="note-name">Jake</p>
+        <p class="note-when">Saturday</p>
+        <span class="note-rule" aria-hidden="true"></span>
+        <p class="note-text">Sparklers on the porch. We missed you!</p>
+      </div>
+    </a>
+  </div>
+
+  <section class="new" aria-labelledby="new-title">
+    <h2 class="new-title" id="new-title">New for you</h2>
+
+    <a class="pcard" href="photo.html?state=video">
+      <span class="pcard-art">
+        <span class="print"><img src="../assets/photos/p646.jpg" alt=""></span>
+        <span class="play-badge" aria-hidden="true"><svg viewBox="0 0 20 20" fill="currentColor"><path d="M4 2.5v15l13-7.5z"/></svg></span>
+      </span>
+      <span class="pcard-text">
+        <span class="pcard-title">Video from Sarah</span>
+        <span class="pcard-meta">This morning</span>
+      </span>
+    </a>
+
+    <a class="pcard" href="photo.html">
+      <span class="pcard-art stack">
+        <span class="print"><img src="../assets/photos/p129.jpg" alt=""></span>
+        <span class="print"><img src="../assets/photos/p174.jpg" alt=""></span>
+        <span class="print"><img src="../assets/photos/p1015.jpg" alt=""></span>
+      </span>
+      <span class="pcard-text">
+        <span class="pcard-title">3 photos from Mike</span>
+        <span class="pcard-meta">Yesterday</span>
+      </span>
+    </a>
+
+    <a class="pcard" href="photo.html">
+      <span class="pcard-art">
+        <span class="print"><img src="../assets/photos/p837.jpg" alt="" style="object-position:60% 40%"></span>
+      </span>
+      <span class="pcard-text">
+        <span class="pcard-title">Photo from Lily</span>
+        <span class="pcard-quote">“Meet Biscuit! He snores.”</span>
+      </span>
+    </a>
+
+    <a class="voice" href="#record" data-tap>
+      <span class="print"><img src="../assets/photos/p815.jpg" alt=""></span>
+      <span class="voice-label">
+        <span class="voice-mic" aria-hidden="true"><svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"><rect x="14.5" y="4.5" width="11" height="19" rx="5.5"/><path d="M8.5 19.5a11.5 11.5 0 0 0 23 0"/><path d="M20 31v5"/></svg></span>
+        <span class="voice-text">Message to the whole family</span>
+      </span>
+    </a>
+  </section>
+</main>
+
+<script>
+  // States: ?state=offline | night. The slideshow changes slowly (every 40 s),
+  // crossfading like a print developing; with reduced motion it just swaps.
+  // At night it stops on one dimmed print.
+  (function () {
+    var state = new URLSearchParams(location.search).get('state') || 'default';
+    document.documentElement.dataset.state = state;
+    var time = document.querySelector('.clock-time');
+    if (state === 'night') time.textContent = time.dataset.timeNight;
+
+    var slides = [].slice.call(document.querySelectorAll('.slide'));
+    var start = { 'default': 0, offline: 2, night: 3 }[state] || 0;
+    var i = start;
+    slides[i].classList.add('is-on');
+    if (state === 'night') return;
+    var still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    setInterval(function () {
+      slides[i].classList.remove('is-on', 'fade-in');
+      i = (i + 1) % slides.length;
+      if (!still) slides[i].classList.add('fade-in');
+      slides[i].classList.add('is-on');
+    }, 40000);
+  })();
+</script>
+</body>
+</html>

@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1280, height=800, initial-scale=1">
+<title>Home · Front Porch</title>
+<script>
+  // States: default · ?state=offline · ?state=night
+  var st = new URLSearchParams(location.search).get('state') || 'default';
+  document.documentElement.dataset.state = st;
+  if (st === 'night') document.documentElement.dataset.night = '1';  // night is a mode every screen shares
+</script>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="frame.css">
+<style>
+  /* ---- Top-bar line: one slot, one calm sentence per state ------------- */
+  .msg { display: none; align-items: center; gap: 16px; }
+  [data-state="default"] .msg-day,
+  [data-state="offline"] .msg-offline,
+  [data-state="night"] .msg-night { display: flex; }
+  .msg-offline {
+    background: var(--surface); border-radius: var(--r-md);
+    padding: 10px 26px 10px 18px; margin-top: 0;  /* centred on the Home key, which sits pressed in on Home */
+  }
+  .msg-offline .icon { font-size: 48px; color: var(--ink-2); stroke-width: 3; }
+  .msg-offline .big { font-size: var(--g-item); }
+  .msg-offline .sub { font-size: var(--g-small); margin-top: 2px; }
+
+  /* ---- The slideshow -------------------------------------------------- */
+  a.card { box-shadow: 0 var(--g-lip) 0 var(--ink); bottom: 6px; }
+  .slide, .cap { position: absolute; inset: 0; opacity: 0; }
+  .slide:first-child, .cap:first-child { opacity: 1; }
+  .card .words { position: relative; height: 122px; }
+  .cap { padding: 16px 26px 18px; }
+  .cap .who { display: flex; align-items: center; gap: 12px; }
+  .cap .say { margin-top: 6px; }
+
+  /* Slowly, one photo every 20 seconds, a 2-second cross-fade. */
+  @keyframes show { 0% { opacity: 0; } 3.4% { opacity: 1; } 33.3% { opacity: 1; } 36.7% { opacity: 0; } 100% { opacity: 0; } }
+  .slide, .cap { animation: show 60s linear infinite both; }
+  .s1 { animation-delay: -3s; }
+  .s2 { animation-delay: 17s; }
+  .s3 { animation-delay: 37s; }
+  /* Reduced motion: the photos still change (that is the frame's job), with a cut, not a fade. */
+  @media (prefers-reduced-motion: reduce) {
+    .slide, .cap { animation-timing-function: step-end; }
+  }
+
+  /* ---- Rail: new things, then the whole-family message ----------------- */
+  .item {
+    height: 104px; justify-content: flex-start; gap: 18px;
+    padding: 0 14px 0 10px; margin-bottom: 16px; text-align: left;
+  }
+  .item .t { display: flex; flex-direction: column; }
+  .item .kind { font-size: var(--g-small); font-weight: 700; color: var(--ink-2); line-height: 1.1; }
+  .item .from { font-size: var(--g-item); font-weight: 800; line-height: 1.1; }
+  .thumb { position: relative; width: 78px; height: 78px; flex: none; }
+  .thumb img { width: 78px; height: 78px; object-fit: cover; border-radius: 12px; border: 3px solid var(--ink); }
+  .thumb .badge {
+    position: absolute; left: 50%; top: 50%; width: 46px; height: 46px; margin: -23px 0 0 -23px;
+    border-radius: 50%; background: var(--primary); border: 3px solid #fff;
+    display: grid; place-items: center; color: #fff;
+  }
+  .thumb .badge .icon { font-size: 24px; margin-left: 3px; }
+  .stack img { position: absolute; width: 60px; height: 60px; border-radius: 10px; }
+  .stack img:nth-child(1) { left: 0; top: 2px; transform: rotate(-8deg); }
+  .stack img:nth-child(2) { left: 9px; top: 9px; transform: rotate(5deg); }
+  .stack img:nth-child(3) { left: 18px; top: 18px; }
+
+  .family {
+    margin-top: auto; height: 238px; padding: 0; overflow: hidden;
+    flex-direction: column; align-items: stretch; gap: 0; background: var(--ink);
+  }
+  .family .strip { flex: 1; min-height: 0; width: 100%; object-fit: cover; object-position: center 62%; }
+  .family .plate {
+    background: var(--primary); color: var(--on-color);
+    border-top: var(--g-line) solid var(--ink);
+    display: flex; align-items: center; gap: 16px; padding: 14px 18px 14px 14px; text-align: left;
+  }
+  .family .mic {
+    width: 68px; height: 68px; flex: none; border-radius: 50%;
+    background: #fff; color: var(--primary); display: grid; place-items: center;
+  }
+  .family .mic .icon { font-size: 40px; stroke-width: 3.2; }
+  .family .t { font-size: var(--g-key2); font-weight: 800; line-height: 1.1; }
+
+  /* ---- Night (shared rules in frame.css): the pictures rest, everything still findable */
+  [data-night] .item .kind { color: var(--n-ink-2); }
+  [data-night] .msg-night .icon { font-size: 52px; color: #F2D27A; }
+  [data-night] a.card { box-shadow: 0 var(--g-lip) 0 var(--n-line); }
+  [data-night] .thumb img,
+  [data-night] .family .strip { filter: brightness(var(--n-photo)); }
+  [data-night] .thumb img { border-color: var(--n-line); }
+  [data-night] .family .plate { background: var(--n-primary); border-top-color: var(--n-line); }
+  [data-night] .family .mic { background: #D9DDE3; color: var(--n-primary); }
+  [data-night] .thumb .badge { background: var(--n-primary); border-color: #D9DDE3; }
+  /* The slideshow rests on one picture until morning. */
+  [data-night] .slide, [data-night] .cap { animation-play-state: paused; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="i-home" viewBox="0 0 32 32"><path d="M4.5 15.5 16 5l11.5 10.5"/><path d="M8 13v14h16V13"/><path d="M13.5 27v-7h5v7"/></symbol>
+  <!-- the same house, filled in: "you're here" -->
+  <symbol id="i-home-on" viewBox="0 0 32 32"><path d="M4.5 15.5 16 5l11.5 10.5"/><path d="M8 13 16 5.8 24 13v14H8z" fill="currentColor"/><rect x="13.6" y="19.6" width="4.8" height="7.4" rx="0.6" style="fill:var(--door);stroke:none"/></symbol>
+  <symbol id="i-play" viewBox="0 0 32 32"><path d="M10 6.5v19l16-9.5z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 32 32"><rect x="11.5" y="3.5" width="9" height="16" rx="4.5" fill="currentColor"/><path d="M6.5 14.5a9.5 9.5 0 0 0 19 0M16 24.5V28.5M10.5 28.5h11"/></symbol>
+  <symbol id="i-wifi" viewBox="0 0 32 32"><path d="M3.5 12.5a18 18 0 0 1 25 0M8 17a11.5 11.5 0 0 1 16 0M12.5 21.5a5 5 0 0 1 7 0"/><circle cx="16" cy="25.6" r="1.8" fill="currentColor" stroke="none"/><path d="M5.5 4.5l21 23"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 32 32"><path d="M25.5 19.5A10.5 10.5 0 1 1 12.5 6.5a8.5 8.5 0 0 0 13 13z" fill="currentColor" stroke="none"/></symbol>
+</svg>
+
+<header class="top">
+  <a class="key home" href="home.html" data-home aria-current="page" aria-label="Home, you're here">
+    <svg class="icon" aria-hidden="true"><use href="#i-home-on"/></svg>Home
+  </a>
+
+  <div class="line" aria-live="polite">
+    <div class="msg msg-day"><div class="big">Good morning</div></div>
+    <div class="msg msg-offline">
+      <svg class="icon" aria-hidden="true"><use href="#i-wifi"/></svg>
+      <div><div class="big">No internet right now</div><div class="sub">Your saved photos keep showing</div></div>
+    </div>
+    <div class="msg msg-night">
+      <svg class="icon" aria-hidden="true"><use href="#i-moon"/></svg>
+      <div><div class="big">Good night</div><div class="sub">The pictures rest until morning</div></div>
+    </div>
+  </div>
+
+  <div class="clock">
+    <div class="time"><span class="t-day">10:42 am</span><span class="t-night">9:42 pm</span></div>
+    <div class="date">Tuesday, October 21</div>
+  </div>
+</header>
+
+<main class="stage">
+  <a class="card" href="photo.html" aria-label="Open this photo">
+    <div class="pic">
+      <!-- Portrait from a phone: whole and upright, its own colours blurred behind it. -->
+      <div class="slide s1">
+        <img class="fill" src="../assets/photos/p1003.jpg" alt="" aria-hidden="true">
+        <img class="whole" src="../assets/photos/p1003.jpg" alt="A young fawn standing in autumn leaves">
+      </div>
+      <div class="slide s2"><img class="cover" src="../assets/photos/p837.jpg" alt="Biscuit the bulldog"></div>
+      <div class="slide s3"><img class="cover" src="../assets/photos/p129.jpg" alt="Two people on a bench by the water"></div>
+    </div>
+    <div class="words">
+      <div class="cap s1"><div class="who">From Jake · Sunday</div><div class="say">A fawn came right up to the porch!</div></div>
+      <div class="cap s2"><div class="who">From Lily · This morning</div><div class="say">Meet Biscuit! He snores.</div></div>
+      <div class="cap s3"><div class="who">From Mike · Yesterday</div><div class="say">Our favorite bench, same as always.</div></div>
+    </div>
+  </a>
+</main>
+
+<aside class="rail" aria-label="New for you">
+  <div class="rail-head">New for you</div>
+
+  <a class="key item" href="photo.html?state=video">
+    <span class="thumb">
+      <img src="../assets/photos/p646.jpg" alt="">
+      <span class="badge" aria-hidden="true"><svg class="icon"><use href="#i-play"/></svg></span>
+    </span>
+    <span class="t"><span class="kind">Video</span> <span class="from">from Sarah</span></span>
+  </a>
+
+  <a class="key item" href="photo.html">
+    <span class="thumb stack" aria-hidden="true">
+      <img src="../assets/photos/p129.jpg" alt="">
+      <img src="../assets/photos/p174.jpg" alt="">
+      <img src="../assets/photos/p1015.jpg" alt="">
+    </span>
+    <span class="t"><span class="kind">3 photos</span> <span class="from">from Mike</span></span>
+  </a>
+
+  <a class="key item" href="photo.html">
+    <span class="thumb"><img src="../assets/photos/p837.jpg" alt=""></span>
+    <span class="t"><span class="kind">Photo</span> <span class="from">from Lily</span></span>
+  </a>
+
+  <button class="key family" type="button">
+    <img class="strip" src="../assets/photos/p815.jpg" alt="">
+    <span class="plate">
+      <span class="mic" aria-hidden="true"><svg class="icon"><use href="#i-mic"/></svg></span>
+      <span class="t">Message to the whole family</span>
+    </span>
+  </button>
+</aside>
+</body>
+</html>

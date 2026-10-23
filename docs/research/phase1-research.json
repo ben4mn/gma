@@ -1,0 +1,1333 @@
+{
+ "research": [
+  {
+   "key": "server-media-auth-push",
+   "out": {
+    "facts": [
+     {
+      "topic": "Cloudflare upload limit",
+      "claim": "The maximum request body for proxied traffic is 100 MB on Free and Pro, 200 MB on Business, and up to 5 GB self-serve on Enterprise. Oversized requests get an HTTP 413 from Cloudflare's edge, before the origin sees them.",
+      "detail": "Cloudflare's cache docs also warn that very large uploads can fail on connection or read timeouts before they reach the size limit. A 300\u2013400 MB phone video cannot be sent as one POST on a Free zone.",
+      "sources": [
+       "https://developers.cloudflare.com/workers/platform/limits/",
+       "https://developers.cloudflare.com/cache/concepts/default-cache-behavior/"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Rules out a single multipart POST for video. Uploads must be chunked or resumable (each request well under 100 MB), or go straight to R2."
+     },
+     {
+      "topic": "Cloudflare upload limit through Tunnel",
+      "claim": "The 100 MB cap also applies to Cloudflare Tunnel public hostnames, because tunnel traffic passes through Cloudflare's proxy.",
+      "detail": "Cloudflare's docs tie the limit to proxied traffic but do not name Tunnel. Community threads and the tus/Kirby plugin docs report 413s through tunnels at 100 MB. The only bypasses are a grey-cloud (DNS-only) record, which exposes the home IP, or Tailscale for Ben's own uploads.",
+      "sources": [
+       "https://developers.cloudflare.com/workers/platform/limits/",
+       "https://community.cloudflare.com/t/max-upload-size/630925",
+       "https://lemm.ee/post/16488452"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Running cloudflared does not avoid the cap. Plan chunked uploads from day one."
+     },
+     {
+      "topic": "Cloudflare timeouts",
+      "claim": "Proxy read timeout is 125 s (HTTP 524; changeable only on Enterprise). Proxy write timeout is 30 s and proxy idle timeout is 900 s (520).",
+      "detail": "Older material (including Edward's own notes) says 100 s. The current Connection limits page says 125 s.",
+      "sources": [
+       "https://developers.cloudflare.com/fundamentals/reference/connection-limits/"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Transcoding must run asynchronously: return 202 and a job id, then poll or use SSE. Keep chunks small enough that one PATCH finishes well inside the timeouts on a slow cellular uplink."
+     },
+     {
+      "topic": "Cloudflare Tunnel response buffering",
+      "claim": "Tunnel buffers responses by default unless the origin sends a Content-Type of text/event-stream.",
+      "sources": [
+       "https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/troubleshoot-tunnels/common-errors/"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "SSE realtime (PocketBase or a custom /events) works through the tunnel only with the exact text/event-stream header. nginx also needs proxy_buffering off on that location."
+     },
+     {
+      "topic": "Cloudflare cache",
+      "claim": "Free, Pro and Business zones can cache files up to 512 MB. The default cached extensions include MP4 and WEBM but not MOV.",
+      "sources": [
+       "https://developers.cloudflare.com/cache/concepts/default-cache-behavior/"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Serve renditions as .mp4. Never put authenticated per-user media behind 'Cache Everything' without a cache key or authorization design."
+     },
+     {
+      "topic": "Cloudflare CDN terms (video and large files)",
+      "claim": "The Service-Specific Terms (CDN section, last updated 2026-09-28) say non-Enterprise customers must use Paid Services (Developer Platform such as R2, Images, Stream) to serve video and other large files. Cloudflare may limit the CDN for zones serving video, or a disproportionate share of pictures, audio or large files, without them. The text makes no distinction between cached and uncached or authenticated responses.",
+      "detail": "The May 2023 blog post moved this restriction from the Self-Serve Agreement to a CDN-only term and dropped the HTML vs non-HTML test. It says video and large files are fine 'so long as that content is hosted by a Cloudflare service like Stream, Images, or R2', and that 'Video and large files hosted outside of Cloudflare will still be restricted on our CDN.' No enforcement threshold is published. Community reports say small personal use is rarely touched, but that is anecdotal.",
+      "sources": [
+       "https://www.cloudflare.com/service-specific-terms-application-services/",
+       "https://blog.cloudflare.com/updated-tos/"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Video (and arguably a photo-heavy feed) served from the homelab disk through the Tunnel is technically restricted. Media served from R2 is explicitly allowed. This argues for storing served renditions in R2."
+     },
+     {
+      "topic": "R2 pricing",
+      "claim": "Standard storage costs $0.015/GB-month, Class A operations $4.50 per million and Class B $0.36 per million. Egress is free. The monthly free tier covers 10 GB-month, 1M Class A and 10M Class B. Infrequent Access costs $0.01/GB-month plus $0.01/GB retrieval, with a 30-day minimum.",
+      "detail": "DeleteObject, DeleteBucket and AbortMultipartUpload are free, as are 401 responses. At family scale (say 50 GB) storage is about $0.60/month and operations stay inside the free tier.",
+      "sources": [
+       "https://developers.cloudflare.com/r2/pricing/"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "R2 is effectively free to cheap for this app, so cost is not a reason to keep media off R2."
+     },
+     {
+      "topic": "R2 presigned URLs and limits",
+      "claim": "Presigned URLs support GET, HEAD, PUT and DELETE. POST form uploads are not supported. Maximum expiry is 7 days (604,800 s). They work only on <ACCOUNT_ID>.r2.cloudflarestorage.com, not on custom domains, and browser use needs bucket CORS.",
+      "detail": "A single-request upload can be up to 5 GiB; multipart allows up to 10,000 parts and 4.995 TiB. Uploads through a Worker are capped by the Worker request-size limit (100 MB on Free). The S3 endpoint is not a proxied zone, so the 100 MB zone cap does not apply to presigned PUTs.",
+      "sources": [
+       "https://developers.cloudflare.com/r2/api/s3/presigned-urls/",
+       "https://developers.cloudflare.com/r2/platform/limits/"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Direct-to-R2 upload works with presigned multipart (UploadPart is a PUT). Without a POST policy you cannot enforce size at the edge, so check size after upload. Presigned GETs are a simple way to serve private media from R2 with no CDN involved."
+     },
+     {
+      "topic": "R2 bucket access",
+      "claim": "Buckets are private by default. A custom domain must be a zone in the same Cloudflare account. r2.dev is rate-limited and meant for non-production use. A custom domain can be gated with Cloudflare Access or WAF token authentication (which needs Pro or above), and r2.dev must then be disabled or the bucket stays public there.",
+      "sources": [
+       "https://developers.cloudflare.com/r2/buckets/public-buckets/",
+       "https://developers.cloudflare.com/waf/custom-rules/use-cases/configure-token-authentication/"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "On a Free zone, private media needs presigned GETs or a Worker with an R2 binding that checks the app session (Workers Free allows 100k requests/day). HMAC token auth on the zone is not available."
+     },
+     {
+      "topic": "Cloudflare Workers plans",
+      "claim": "Workers Free allows 100,000 requests/day and 10 ms CPU per invocation. Workers Paid has a $5/month minimum and includes 10M requests.",
+      "sources": [
+       "https://developers.cloudflare.com/workers/platform/pricing/"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "A small auth-checking Worker in front of R2 fits the free plan at family scale."
+     },
+     {
+      "topic": "Cloudflare Access free tier",
+      "claim": "Zero Trust (Access) is free for up to 50 users. Pay-as-you-go is reported at $7/user/month.",
+      "detail": "The 50-user figure comes from Cloudflare's own 2020 Teams plans post and is repeated by 2026 third-party pricing summaries. I could not load the current Cloudflare plans page. The free plan has 24 h log retention.",
+      "sources": [
+       "https://blog.cloudflare.com/teams-plans/",
+       "https://costbench.com/software/business-vpn/cloudflare-zero-trust/free-plan/"
+      ],
+      "confidence": "medium",
+      "as_of": "2026-10-22",
+      "decision_impact": "Access is fine as a gate for a draft or staging subdomain. Do not gate production with it: about 40 relatives plus Grandma is close to the 50-seat cap, and installed iOS web apps keep their own cookie jar, so they would show the Access login again."
+     },
+     {
+      "topic": "tus resumable uploads",
+      "claim": "Current versions: @tus/server 2.4.6 (2026-10-17, Node >=20.19), @tus/s3-store 2.0.8, @tus/file-store 2.1.1. tus-js-client 4.3.1 is the stable release (2025-01-16; 5.0.0-pre3 since 2026-09-30). Uppy is @uppy/core 6.3.0 and @uppy/tus 6.0.0.",
+      "detail": "In tus-js-client, chunkSize defaults to Infinity (the whole file in one PATCH). The docs say to set it below the smallest body limit on the path, explicitly naming CDNs that return 413. @tus/server's README has a Fastify example: register addContentTypeParser('application/offset+octet-stream', (req, payload, done) => done(null)) and pass req.raw/res.raw. Behind a proxy it needs respectForwardedHeaders: true, request buffering disabled and the max body size adjusted.",
+      "sources": [
+       "https://registry.npmjs.org/@tus/server",
+       "https://github.com/tus/tus-node-server/blob/main/packages/server/README.md",
+       "https://github.com/tus/tus-js-client/blob/main/docs/api.md",
+       "https://github.com/tus/tus-js-client/releases"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "tus with Uppy (or tus-js-client) against @tus/server on Fastify is a maintained, low-risk way past the 100 MB cap. Set chunkSize explicitly."
+     },
+     {
+      "topic": "iPhone capture formats",
+      "claim": "With Camera > Formats set to High Efficiency, iPhones capture HEIF/HEIC photos and HEVC video. 'Most Compatible' switches to JPEG and H.264. HDR video is Dolby Vision Profile 8 with HLG in 10-bit HEVC.",
+      "sources": [
+       "https://support.apple.com/en-us/116944",
+       "https://support.apple.com/en-eg/102241",
+       "https://developer.Apple.com/av-foundation/Incorporating-HDR-video-with-Dolby-Vision-into-your-apps.pdf"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "The server must handle HEIC and 10-bit HDR HEVC whatever the browser does, because Files-app, desktop and AirDrop'd files arrive as originals."
+     },
+     {
+      "topic": "iOS Safari file input conversion",
+      "claim": "From current WebKit source (WKFileUploadPanel.mm) and a 2024-03-05 commit: photos are converted to JPEG only when the accept attribute restricts image types. With accept='image/*' (or no accept) the original HEIC is delivered. Videos picked from the library are always re-encoded on the phone to H.264 QuickTime (.MOV) with AVAssetExportPresetHighestQuality behind a 'Preparing\u2026' sheet. The resolution is kept (no downscale), so it is not compression.",
+      "detail": "WebKit's Current-representation mode (used when accept contains public.image or is empty, and Safari prefers original formats) delivers original images and transcodes video itself. Compatible mode (specific image types listed) has the system picker convert to JPEG/H.264. Photos taken with the camera inside the picker become JPEG at 0.8 quality. A 4K HEVC clip becomes a 4K H.264 .MOV; HEVC\u2192H.264 at highest quality is typically the same size or larger (my inference). Whether HDR is tone-mapped by Apple's H.264 export is not verified.",
+      "sources": [
+       "https://github.com/WebKit/WebKit/blob/main/Source/WebKit/UIProcess/ios/forms/WKFileUploadPanel.mm",
+       "https://www.mail-archive.com/webkit-changes@lists.webkit.org/msg211341.html",
+       "https://www.mail-archive.com/webkit-changes@lists.webkit.org/msg177757.html",
+       "https://developer.apple.com/forums/thread/743049"
+      ],
+      "confidence": "medium",
+      "as_of": "2026-10-22",
+      "decision_impact": "Expect HEIC photos and large 4K H.264 .MOV videos from iPhones with accept='image/*,video/*'. Upload sizes do not shrink, so chunking is mandatory and the on-device 'Preparing\u2026' wait needs UX copy. Test on a real device: the Safari preference is a delegate whose value I could not read."
+     },
+     {
+      "topic": "sharp and HEIC",
+      "claim": "sharp's prebuilt binaries read and write JPEG, PNG, Ultra HDR, WebP, AVIF, TIFF and GIF (plus SVG input), with no HEIC. HEIC with hevc compression needs a globally installed libvips built with libheif, libde265 and x265.",
+      "detail": "sharp 0.35.5 (2026-09-27) needs a global libvips >= 8.18.7. Debian trixie ships 8.16.1, Alpine 3.24 ships 8.18.2, and only Alpine edge and Debian forky/sid ship 8.18.7. So a global-libvips sharp works on stable Debian only with sharp <= 0.34.2 (>=8.16.1), or on Alpine 3.23/3.24 with sharp <= 0.34.5. Maintainers have said prebuilt sharp will never include HEVC while it is patent-encumbered.",
+      "sources": [
+       "https://sharp.pixelplumbing.com/install/",
+       "https://sharp.pixelplumbing.com/api-output/",
+       "https://registry.npmjs.org/sharp",
+       "https://sources.debian.org/src/vips/",
+       "https://pkgs.alpinelinux.org/packages?name=vips",
+       "https://github.com/lovell/sharp/issues/3346"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Do not rely on `npm i sharp` for HEIC. Either convert HEIC first with a CLI (Debian trixie: libheif-examples `heif-dec`, or libvips-tools `vips`/`vipsthumbnail`, or ImageMagick 7.1.1) and then use prebuilt sharp, or pin an old sharp against the distro libvips."
+     },
+     {
+      "topic": "Debian trixie HEIC and ffmpeg packages",
+      "claim": "Debian 13 (trixie) ships libheif 1.19.8, and libheif1 hard-depends on libheif-plugin-libde265, so HEIC decoding works out of the box. It also ships libvips 8.16.1, ImageMagick 7.1.1.43 and ffmpeg 7.1.5. Debian's ffmpeg is built with libx264, libzimg (the zscale filter), libplacebo, libdav1d and libvpl.",
+      "sources": [
+       "https://sources.debian.org/src/libheif/",
+       "https://sources.debian.org/data/main/libh/libheif/1.19.8-1%2Bdeb13u1/debian/control",
+       "https://sources.debian.org/src/ffmpeg/",
+       "https://sources.debian.org/data/main/f/ffmpeg/7:7.1.5-0%2Bdeb13u1/debian/rules"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "A debian:trixie-slim worker image with `ffmpeg libvips-tools libheif-examples` covers HEIC, HEVC, HDR tone mapping and H.264 output with no source builds."
+     },
+     {
+      "topic": "EXIF orientation and GPS",
+      "claim": "sharp strips all metadata by default (EXIF, including orientation and GPS, plus ICC unless kept). autoOrient() applies the EXIF Orientation tag and then removes it; rotate() with no argument calls autoOrient(). keepExif and withMetadata keep EXIF, including GPS.",
+      "detail": "ffmpeg copies global metadata from the first input by default (an iPhone .MOV carries a location tag), so transcodes need `-map_metadata -1`. When video is re-encoded, ffmpeg applies the display-matrix rotation at the filter stage (autorotate).",
+      "sources": [
+       "https://sharp.pixelplumbing.com/api-output/",
+       "https://github.com/lovell/sharp/blob/main/docs/src/content/docs/api-operation.md",
+       "https://ffmpeg.org/ffmpeg.html"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Renditions are safe by default with sharp. Video and any served or downloadable originals need explicit stripping."
+     },
+     {
+      "topic": "Raspberry Pi 4 video decode",
+      "claim": "Pi 4 hardware decodes H.265 at 4Kp60 and H.264 at 1080p60 (encodes H.264 at 1080p30). Chromium on Raspberry Pi OS does not play HEVC: a Raspberry Pi engineer said 'We won't be working on chromium HEVC support' (Nov 2025, reaffirmed Sep 2026), and users report isTypeSupported('hvc1') returns false.",
+      "sources": [
+       "https://www.raspberrypi.com/products/raspberry-pi-4-model-b/specifications/",
+       "https://forums.raspberrypi.com/viewtopic.php?t=393549",
+       "https://forums.raspberrypi.com/viewtopic.php?t=375044"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "The transcode target must be 8-bit H.264. HEVC or 10-bit output will not play on Grandma's screen."
+     },
+     {
+      "topic": "Chromium H.264 hardware decode on Pi 4",
+      "claim": "Chromium on Raspberry Pi OS hardware-decodes H.264 by default through V4L2 (bcm2835-codec). Rpt builds 151.0.7922.71 rpt1 and 152.0.7977.82 rpt1 could freeze the VideoCore when looping short H.264 clips; the fix shipped in 152.0.7977.82 rpt2 and the issue closed on 2026-09-15.",
+      "detail": "Several autoplaying video elements on one page made the freeze more likely. Workarounds were --disable-accelerated-video-decode or gpu_mem=128.",
+      "sources": [
+       "https://github.com/raspberrypi/trixie-feedback/issues/101",
+       "https://forums.raspberrypi.com/viewtopic.php?t=343593"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Pin or verify Chromium >= 152.0.7977.82 rpt2 on the kiosk. Have the slideshow mount one <video> at a time and tear it down cleanly, and run a reload watchdog."
+     },
+     {
+      "topic": "Kiosk permissions",
+      "claim": "Chromium enterprise policies AudioCaptureAllowedUrls (grants microphone access without a prompt; '*' not allowed) and AutoplayAllowlist (autoplay with sound) apply on Linux Chromium.",
+      "sources": [
+       "https://chromium.googlesource.com/chromium/src/+/main/components/policy/resources/templates/policy_definitions/Miscellaneous/AudioCaptureAllowedUrls.yaml",
+       "https://chromium.googlesource.com/chromium/src/+/main/components/policy/resources/templates/policy_definitions/Miscellaneous/AutoplayAllowlist.yaml"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Put a managed policy JSON with https://gma.4mn.org in both policies on the Pi, so Grandma never sees a microphone prompt and videos play with sound."
+     },
+     {
+      "topic": "Voice note formats",
+      "claim": "Chrome's MediaRecorder has recorded MP4 (with Opus audio) since Chrome 126, and WebM/Opus before that. Safari on iOS has played WebM audio since iOS 15, but there are WebKit reports of WebM Opus failing in <audio> or canPlayType on some versions.",
+      "sources": [
+       "https://blog.addpipe.com/duration-in-mp4-files-produced-by-chrome-safari/",
+       "https://bugs.webkit.org/show_bug.cgi?id=238546"
+      ],
+      "confidence": "medium",
+      "as_of": "2026-10-22",
+      "decision_impact": "Transcode Grandma's voice notes on the server to AAC-LC in .m4a (64\u201396 kbps mono) so every relative's phone plays them."
+     },
+     {
+      "topic": "Job queue",
+      "claim": "BullMQ requires Redis.",
+      "sources": [
+       "https://docs.bullmq.io/"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "For one box and about 40 users, a SQLite jobs table polled in-process (concurrency 1 for video) avoids adding Redis to the homelab."
+     },
+     {
+      "topic": "PocketBase version and stability",
+      "claim": "The latest release is v0.40.5 (2026-10-08), still pre-1.0. The README warns that 'full backward compatibility is not guaranteed before reaching v1.0.0'. v0.23.0 (2024-11-24) brought 'many Go/JSVM and Web APIs breaking changes', and v0.40.0 (2026-08-23) has breaking-change notes and requires Go 1.27. A v0.22.x line still gets patch releases (v0.22.56, same day).",
+      "sources": [
+       "https://github.com/pocketbase/pocketbase/releases",
+       "https://github.com/pocketbase/pocketbase/blob/master/README.md"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "If using PocketBase, pin the exact binary and read the changelog before each upgrade, and expect hook or API rewrites."
+     },
+     {
+      "topic": "PocketBase auth",
+      "claim": "PocketBase supports password, OTP (an email code, added in v0.23), OAuth2 and MFA (any two methods). There is no magic-link feature, but the OTP email template can carry a URL with {OTP} and {OTP_ID}.",
+      "detail": "Code defaults: OTP length 8, OTP duration 180 s (max 86,400), auth token 5 days (max about 3 years), file token 3 min, and the new-login auth alert email is on. The JS SDK's default LocalAuthStore keeps the token in localStorage.",
+      "sources": [
+       "https://pocketbase.io/docs/authentication/",
+       "https://github.com/pocketbase/pocketbase/blob/master/core/collection_model_auth_options.go",
+       "https://github.com/pocketbase/js-sdk/blob/master/README.md"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "OTP fits the iOS-PWA problem. Raise the OTP expiry to 10\u201315 min, lengthen the token duration and refresh it on launch, and reconsider the auth alert emails. localStorage auth is not copied into an iOS Home Screen app at install."
+     },
+     {
+      "topic": "PocketBase files",
+      "claim": "Files are stored locally in pb_data/storage or on S3-compatible storage. Thumbnails are generated only for JPG, PNG and GIF (first frame), with WebP partial (saved as PNG); there are no video thumbnails. A file field's default max is about 5 MB per file. Protected files use short-lived file tokens. Resumable or chunked uploads are not documented.",
+      "sources": [
+       "https://pocketbase.io/docs/files-handling/"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "PocketBase gives no HEIC thumbnails, no video posters and no resumable upload, so it does not solve the two hardest parts of this app. A separate tus endpoint and ffmpeg worker are needed anyway."
+     },
+     {
+      "topic": "PocketBase realtime, hooks, ops",
+      "claim": "Realtime is Server-Sent Events, and the server disconnects after 5 minutes without messages (clients reconnect). JS hooks run in an embedded goja engine (ES5 with most of ES6, not Node; CommonJS only) and $os.cmd() can run external commands such as ffmpeg. Built-in backups go to local disk or S3. The default mailer is sendmail (configure SMTP). There is a built-in rate limiter, and scaling is vertical only.",
+      "sources": [
+       "https://pocketbase.io/docs/api-realtime/",
+       "https://pocketbase.io/docs/js-overview/",
+       "https://pocketbase.io/jsvm/functions/_os.cmd.html",
+       "https://pocketbase.io/docs/going-to-production/",
+       "https://pocketbase.io/faq/"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Running ffmpeg synchronously inside a request hook would block and hit the 125 s edge timeout. Long jobs need an external worker either way."
+     },
+     {
+      "topic": "Fastify",
+      "claim": "Fastify 5.12.7 is current (2026-10-13), with v6.0.0-alpha.5 in pre-release. The v5 LTS table lists Node 20 and 22, and v4 reached end of LTS on 2025-06-30.",
+      "sources": [
+       "https://github.com/fastify/fastify/releases",
+       "https://fastify.dev/docs/latest/Reference/LTS/"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Build on Fastify 5. v6 is alpha; avoid it for now."
+     },
+     {
+      "topic": "Node LTS and node:sqlite",
+      "claim": "Node 24 (Krypton) moved to Maintenance LTS on 2026-10-20 (EOL 2028-04-30). Node 26 becomes Active LTS on 2026-10-28 (EOL 2029-04-30), and Node 22 reaches EOL on 2027-04-30. node:sqlite is 'Stability 1.2 \u2013 Release candidate' (since v24.15.0 and v25.7.0); it lost the --experimental-sqlite flag in 22.13 and 23.4.",
+      "sources": [
+       "https://github.com/nodejs/release#release-schedule",
+       "https://nodejs.org/docs/latest-v24.x/api/sqlite.html",
+       "https://nodejs.org/api/sqlite.html"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Target Node 24 or 26. node:sqlite is usable but not yet stable; better-sqlite3 remains the conservative choice."
+     },
+     {
+      "topic": "better-sqlite3",
+      "claim": "better-sqlite3 13.0.3 (2026-08-05) requires Node >= 22.",
+      "sources": [
+       "https://registry.npmjs.org/better-sqlite3",
+       "https://github.com/WiseLibs/better-sqlite3/releases"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "It is compatible with Node 24 and 26. A native addon means a build step or prebuilt binary in the Docker image."
+     },
+     {
+      "topic": "Litestream",
+      "claim": "Litestream v0.5.17 (2026-08-31) is current. v0.5.0 (2025-09-30) moved to the LTX format and cannot restore v0.3 WAL backups. v0.5 allows one replica per database, and age encryption was rejected and then removed. R2 needs endpoint <account>.r2.cloudflarestorage.com and region auto; sign-payload and concurrency=2 are set automatically. B2's force-path-style is detected automatically.",
+      "sources": [
+       "https://github.com/benbjohnson/litestream/releases",
+       "https://litestream.io/guides/s3-compatible/",
+       "https://litestream.io/docs/migration/"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Litestream 0.5 to R2 (or B2) gives continuous offsite SQLite backup. Use bucket-level encryption and keep a separate periodic snapshot, since there is no client-side encryption and only one replica."
+     },
+     {
+      "topic": "Resend",
+      "claim": "Free plan: 3,000 emails/month, capped at 100/day, 3 domains. Pro: $20/month for 50k emails, no daily cap. Data retention is 30 days.",
+      "sources": [
+       "https://resend.com/pricing"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Enough for about 40 relatives' sign-ins, but inviting everyone at once can hit the 100/day cap."
+     },
+     {
+      "topic": "Postmark",
+      "claim": "Free plan: 100 emails/month with no overages. Basic: $15/month for 10k emails ($1.80 per extra 1k).",
+      "sources": [
+       "https://postmarkapp.com/pricing"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "The free tier is too small to rely on. Excellent deliverability if paying."
+     },
+     {
+      "topic": "Amazon SES",
+      "claim": "Outbound mail is $0.10 per 1,000 \u00e0 la carte (tiered plans from $0.16/1k), and attachments cost $0.12/GB. New AWS customers get up to $200 in Free Tier credits. New accounts start in a sandbox: verified recipients only, 200 messages per 24 h, 1 per second. Production access is reviewed, with a first response within 96 h.",
+      "sources": [
+       "https://aws.amazon.com/ses/pricing/",
+       "https://docs.aws.amazon.com/ses/latest/dg/request-production-access.html"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Cheapest at scale, but the sandbox review and AWS account overhead make it the most setup work for a family app."
+     },
+     {
+      "topic": "Cloudflare Email Service",
+      "claim": "Email Sending entered public beta on 2026-04-16. It requires Workers Paid ($5/month minimum), which includes 3,000 emails/month, then $0.35 per 1,000. Sending to verified destination addresses is free on any plan. It can send through the Workers binding, a REST API or authenticated SMTP.",
+      "sources": [
+       "https://developers.cloudflare.com/email-service/platform/pricing/",
+       "https://developers.cloudflare.com/email-service/",
+       "https://developers.cloudflare.com/changelog/post/2026-04-16-email-sending-public-beta/"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "A good fit if Ben already pays for Workers and 4mn.org is on Cloudflare DNS. It is still beta."
+     },
+     {
+      "topic": "Gmail SMTP",
+      "claim": "App passwords need 2-Step Verification, are 'not recommended', and are revoked when the Google password changes. Gmail limits sending to about 500 recipients or messages a day.",
+      "sources": [
+       "https://support.google.com/accounts/answer/185833",
+       "https://support.google.com/mail/answer/22839"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Workable as a stopgap. Sending as @4mn.org through personal Gmail will not DKIM-align with 4mn.org (my inference), which hurts deliverability once DMARC is enforced."
+     },
+     {
+      "topic": "Deliverability requirements",
+      "claim": "Gmail requires every sender to have SPF or DKIM, valid forward and reverse DNS, TLS and a spam rate under 0.3%. Senders of 5,000+ a day need SPF, DKIM and DMARC (p=none allowed), plus From-domain alignment.",
+      "sources": [
+       "https://support.google.com/a/answer/81126"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Even at family volume, publish SPF and DKIM for the provider and a DMARC record on 4mn.org (or a sending subdomain) before sending login codes."
+     },
+     {
+      "topic": "Link scanners consuming one-time links",
+      "claim": "Microsoft Defender Safe Links scans URLs before delivery, and URLs without a valid reputation are 'detonated asynchronously in the background'. Supabase names email prefetching as the most common reason one-time tokens look expired, and recommends invalidating a token only on explicit submission, or linking to a page where the user enters the code.",
+      "sources": [
+       "https://learn.microsoft.com/en-us/defender-office-365/safe-links-about",
+       "https://supabase.com/docs/guides/troubleshooting/otp-verification-failures-token-has-expired-or-otp_expired-errors-5ee4d0"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "An emailed GET link must not sign anyone in. It should land on a page whose button POSTs to consume the token, or the email should carry a typed code."
+     },
+     {
+      "topic": "iOS Home Screen web apps: cookies and storage",
+      "claim": "A Home Screen web app has its own cookie and storage jar. Since iOS and iPadOS 17.2, Safari copies cookies (only) into the web app when it is created. After that 'no other website data is shared', and localStorage is never copied. iOS 26 opens every site added to the Home Screen as a web app by default and requires no manifest. No WebKit release through 26.5 documents links from Mail opening inside an installed web app.",
+      "detail": "WebKit bug 272325 (open, P2) reports session cookies being reset at random in Home Screen apps on iOS 17.2\u201318.1, apparently when a cookie changes between persistent and session.",
+      "sources": [
+       "https://webkit.org/blog/14787/webkit-features-in-safari-17-2/",
+       "https://developer.apple.com/videos/play/wwdc2023/10120/",
+       "https://webkit.org/blog/17333/webkit-features-in-safari-26-0/",
+       "https://bugs.webkit.org/show_bug.cgi?id=272325"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "A magic link tapped in Mail signs in Safari, not the installed app. The fix is a code typed inside the app (link plus code in the same email). Alternatively, sign in through Safari before adding to the Home Screen, which works only with cookie-based (not localStorage) sessions. Use persistent HttpOnly cookies with Max-Age."
+     },
+     {
+      "topic": "Email code autofill on iOS",
+      "claim": "Since iOS 17, Safari can autofill one-time codes that arrive in Apple Mail, as well as Messages.",
+      "detail": "Apple does not document the markup that triggers it; autocomplete='one-time-code' is the standard hint. A developer reported it not working for their email codes.",
+      "sources": [
+       "https://www.techlicious.com/blog/effortless-logins-safaris-new-feature-auto-fills-verification-codes/",
+       "https://developer.apple.com/forums/tags/autofill?page=5"
+      ],
+      "confidence": "medium",
+      "as_of": "2026-10-22",
+      "decision_impact": "Use autocomplete='one-time-code', inputmode='numeric' and a short numeric code to give typed-code login the best chance of one-tap autofill."
+     },
+     {
+      "topic": "Web push on iOS",
+      "claim": "Web push needs iOS/iPadOS 16.4+ and a Home Screen web app (a manifest with display standalone or fullscreen, though iOS 26 no longer requires a manifest). Permission must be requested from direct user interaction. It is standard Push API, Notifications and Service Workers through Apple's push service, with no Apple Developer account. Allow *.push.apple.com if you filter egress. The Badging API is supported.",
+      "sources": [
+       "https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/",
+       "https://webkit.org/blog/17333/webkit-features-in-safari-26-0/"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Show the 'Turn on notifications' button only in standalone mode on iOS, after an Add to Home Screen walkthrough. Never call requestPermission on load."
+     },
+     {
+      "topic": "Silent pushes and subscription changes on Safari",
+      "claim": "Safari requires userVisibleOnly: true and revokes the push subscription if a push handler does not show a notification (no count is published). MDN data lists pushsubscriptionchange as unsupported on iOS Safari; Chrome supports it from 138.",
+      "sources": [
+       "https://webkit.org/blog/12945/meet-web-push/",
+       "https://webkit.org/blog/16535/meet-declarative-web-push/",
+       "https://github.com/mdn/browser-compat-data/blob/main/api/ServiceWorkerGlobalScope.json",
+       "https://developer.apple.com/forums/thread/727372"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Always call showNotification inside event.waitUntil, and never send data-only pushes. On iOS, re-check and re-sync the subscription on every app launch, because the browser will not report a change."
+     },
+     {
+      "topic": "Declarative Web Push",
+      "claim": "Declarative Web Push shipped for Home Screen web apps in iOS/iPadOS 18.4 and in macOS Safari 18.5. It exposes window.pushManager (no service worker needed). The payload carries a top-level \"web_push\": 8030 and a notification object with a required title, a navigate URL and an optional app_badge. Older browsers handle the same message through the service worker, and if a service worker fails to show a replacement, the declarative notification is shown, so there is no silent-push penalty.",
+      "sources": [
+       "https://webkit.org/blog/16535/meet-declarative-web-push/",
+       "https://webkit.org/blog/16574/webkit-features-in-safari-18-4/",
+       "https://webkit.org/blog/16923/webkit-features-in-safari-18-5/"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Send payloads in the declarative JSON shape and keep a service worker push handler. iOS 18.4+ then never loses subscriptions to a failed handler, while Android and older iOS keep working."
+     },
+     {
+      "topic": "Push payload size",
+      "claim": "A push service only has to accept 4,096 octets (RFC 8030), and must not return 413 at or below that. With aes128gcm that leaves at most 3,993 octets of plaintext (RFC 8291).",
+      "sources": [
+       "https://www.rfc-editor.org/rfc/rfc8291.txt",
+       "https://www.rfc-editor.org/rfc/rfc8030.txt"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Send only a title, short body, URL and tag. Never put an image or data in the payload; the app fetches details after the tap."
+     },
+     {
+      "topic": "Expired subscriptions",
+      "claim": "A 404 or 410 from the push service means the subscription has expired or is invalid and should be deleted.",
+      "sources": [
+       "https://web.dev/articles/sending-messages-with-web-push-libraries"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Prune on 404/410, and re-subscribe from the client on launch when getSubscription() returns null."
+     },
+     {
+      "topic": "VAPID",
+      "claim": "A subscription is bound to the VAPID public key it was created with, and the push service must reject messages signed by any other key (RFC 8292 \u00a74.2). Apple's push service rejects a placeholder subject such as mailto:user@localhost with 403 BadJwtToken (web-push README note, Sep 2026).",
+      "sources": [
+       "https://www.rfc-editor.org/rfc/rfc8292.txt",
+       "https://github.com/web-push-libs/web-push/pull/988"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Generate VAPID keys once, store the private key as a secret (not in git), back it up, and use a real mailto: or https: subject. Rotating the key orphans every subscription."
+     },
+     {
+      "topic": "web-push npm library",
+      "claim": "web-push 3.6.7 was last published on 2024-01-16. The GitHub repo is still maintained (dependency and docs commits in Sep 2026, not archived) and the package has about 6.5M weekly downloads. It defaults to aes128gcm and a TTL of 4 weeks. Web Crypto alternatives include @block65/webcrypto-web-push 2.0.0 (2026-09-03) and @pushforge/builder 2.0.5 (2026-04-23).",
+      "sources": [
+       "https://registry.npmjs.org/web-push",
+       "https://github.com/web-push-libs/web-push",
+       "https://registry.npmjs.org/@block65/webcrypto-web-push",
+       "https://registry.npmjs.org/@pushforge/builder"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "web-push is still a fine choice for a Node server. Set a shorter TTL (1\u20133 days) yourself."
+     },
+     {
+      "topic": "Home Screen web apps in the EU",
+      "claim": "Apple reversed its iOS 17.4 plan to remove Home Screen web apps in the EU (announced around 2024-03-01). They stay WebKit-based with the existing capability, push included. I found no later change through 2026.",
+      "sources": [
+       "https://9to5mac.com/2024/03/01/apple-home-screen-web-apps-ios-17-eu/",
+       "https://www.theregister.com/2024/03/02/apple_reverses_pwa_decision/"
+      ],
+      "confidence": "medium",
+      "as_of": "2026-10-22",
+      "decision_impact": "Relatives in the EU should get the same install and push flow, but test with an EU device if any relatives live there."
+     },
+     {
+      "topic": "Android Chrome notifications",
+      "claim": "Chrome on Android supports push without installing the app. Since October 2025, Chrome automatically revokes notification permission from low-engagement, high-volume sites; installed web apps are exempt.",
+      "sources": [
+       "https://techcrunch.com/2025/10/10/google-chrome-silences-those-pesky-notifications/",
+       "https://www.tomsguide.com/computing/browsers/google-finally-adds-a-way-to-tame-notifications-on-chrome-heres-how-it-works"
+      ],
+      "confidence": "medium",
+      "as_of": "2026-10-22",
+      "decision_impact": "Encourage Android relatives to install the PWA too, and keep notifications infrequent (group the day's uploads into one notification using a topic or tag)."
+     },
+     {
+      "topic": "Background upload support on iOS",
+      "claim": "Safari (and so iOS) supports neither the Background Fetch API nor Background Sync, according to MDN compatibility data.",
+      "sources": [
+       "https://github.com/mdn/browser-compat-data/blob/main/api/BackgroundFetchManager.json",
+       "https://github.com/mdn/browser-compat-data/blob/main/api/SyncManager.json"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "An upload only progresses while the PWA is in the foreground. Use resumable chunks and tell relatives to keep the app open; resuming after a reload means picking the file again."
+     }
+    ],
+    "gotchas": [
+     "The 100 MB edge cap applies through cloudflared. A single multipart POST of a 1-minute 4K iPhone video gets a 413 from Cloudflare before nginx or the app sees it. tus-js-client's default chunkSize is Infinity, so it fails the same way unless chunkSize is set.",
+     "iOS does not shrink videos for you. WebKit re-encodes library videos on the phone to full-resolution H.264 .MOV (AVAssetExportPresetHighestQuality) behind a 'Preparing\u2026' sheet, which can take a while for 4K clips. The result is usually the same size as the HEVC original or larger.",
+     "Uploads stall when the iOS PWA goes to the background or the screen locks: no Background Fetch or Sync. After a reload, tus can find the old upload URL, but the user must pick the file again.",
+     "With accept='image/*,video/*', iPhones deliver HEIC originals (WebKit change of March 2024). Listing specific image types instead triggers JPEG conversion, and a 2023 report had Safari 17 renaming files to .heic when image/heic was listed. HEIC also arrives from the Files app, desktop and AirDrop, so the server must decode it either way.",
+     "Prebuilt sharp cannot read HEIC. A global-libvips sharp 0.35.x needs libvips 8.18.7, which Debian trixie (8.16.1) and Alpine 3.24 (8.18.2) don't ship. Do HEIC through heif-dec or the vips CLI, or pin sharp 0.34.2 or older.",
+     "iPhone HDR video (10-bit HLG HEVC with Dolby Vision 8.4) looks washed out if transcoded to 8-bit without tone mapping. 10-bit (High 10) H.264 also can't be hardware-decoded on the Pi, so output must be yuv420p 8-bit.",
+     "ffmpeg copies global metadata by default, including the iPhone .MOV location tag, so it ends up in the family feed unless you pass -map_metadata -1. Originals kept for download still contain GPS.",
+     "Chromium on the Pi has no HEVC at all. Rpt builds 151 and 152 rpt1 could hard-freeze the Pi 4 GPU when looping H.264 clips; fixed in 152.0.7977.82 rpt2. Several autoplaying <video> elements make it worse.",
+     "Cloudflare's CDN terms restrict serving video, or a disproportionate share of pictures, from non-Cloudflare storage on self-serve plans. The terms don't exempt uncached or authenticated responses, and a homelab disk behind a Tunnel counts as 'outside Cloudflare'. R2-hosted media is explicitly allowed.",
+     "R2 presigned URLs work only on the S3 endpoint (not custom domains), are capped at 7 days and have no POST policy, so upload size can't be enforced at the edge. Multipart via presigned parts needs bucket CORS that exposes ETag. Changing presigned GET URLs also break service-worker cache keys unless the query string is normalized.",
+     "Magic links fail for iOS home-screen installs: Mail opens the link in Safari, which has a separate cookie jar from the installed app after install. PocketBase's JS SDK keeps auth in localStorage, which isn't even copied at install (only cookies are, since iOS 17.2).",
+     "Corporate mail scanners (Defender Safe Links detonation, Mimecast, Proofpoint) follow links before the relative does. Any GET that consumes a one-time token gets burned, which shows up as 'link expired'.",
+     "PocketBase's defaults are unfriendly for older relatives: OTP expires in 180 s and is 8 digits long, auth tokens last 5 days, and new-login alert emails are on. PocketBase has no resumable upload, no HEIC or video thumbnails, a ~5 MB default file-field limit, and breaking changes before 1.0 (v0.23, v0.40).",
+     "Cloudflare's proxy read timeout is 125 s, so synchronous transcode-on-upload returns 524. The Tunnel buffers responses unless they are text/event-stream, so SSE also needs nginx proxy_buffering off. PocketBase SSE drops after 5 min idle; the client must reconnect.",
+     "Web push on iOS: there is no pushsubscriptionchange event, subscriptions die silently, and one push handler that fails to show a notification can get the subscription revoked. Apple rejects a mailto:\u2026@localhost VAPID subject with 403 BadJwtToken. Rotating VAPID keys orphans every subscription. Plaintext payloads are capped at about 3,993 bytes.",
+     "Resend's free tier caps at 100 emails/day, so inviting 40 relatives the same day as testing can hit it. SES starts in a sandbox (verified recipients, 200/day) and its production review takes up to 96 h. Cloudflare Email Service needs Workers Paid to email arbitrary addresses. Gmail-SMTP mail from @4mn.org won't DKIM-align with 4mn.org.",
+     "Cloudflare Access is free for at most 50 users and sets its own cookie. That cookie isn't shared into installed iOS web apps, so relatives see the Access login again inside the app. Use Access only for a draft subdomain, never in front of /grandma or production.",
+     "Voice notes recorded in Chromium are WebM/Opus or fragmented MP4/Opus, and some iOS versions have trouble playing WebM Opus in <audio>.",
+     "Litestream 0.5 can't restore 0.3 backups, allows only one replica per database, and has no client-side encryption (age was removed). Node 24 entered Maintenance LTS on 2026-10-20 and Node 26 becomes Active LTS on 2026-10-28. better-sqlite3 13 needs Node 22 or newer, and node:sqlite is still a release candidate."
+    ],
+    "recommendations": [
+     "Upload path: Uppy (@uppy/core 6 + @uppy/tus 6) or tus-js-client 4.3.1, talking to @tus/server 2.4.x mounted in Fastify 5 (use addContentTypeParser('application/offset+octet-stream', \u2026) and pass req.raw/res.raw). Set chunkSize to 16\u201332 MB: well under 100 MB, and small enough to finish within the 125 s/30 s timeouts on cellular. Give tus respectForwardedHeaders: true, a maxSize of about 2 GB, and an onUploadFinish hook that only enqueues a job. In nginx, use proxy_request_buffering off and a client_max_body_size a few MB above the chunk size. Keep the upload UI explicit: 'Keep this screen open'.",
+     "Media storage: keep originals on the homelab disk, which are private, never served and backed up. Push only the renditions (posters, 400 px thumbs, a 1280\u00d7800 display JPEG/WebP, a 2048 px phone image, the 720p MP4 and the voice-note M4A) to a private R2 bucket. Serve them with short-lived presigned GETs from the S3 endpoint, or through a small Worker on an R2 custom domain that checks the app session. This keeps video and photo delivery inside Cloudflare's terms (media hosted on R2) at near-zero cost: 10 GB, 1M Class A and 10M Class B operations free, and no egress fees. Disable r2.dev.",
+     "Image pipeline (worker container on debian:trixie-slim with ffmpeg, libvips-tools and libheif-examples): if the input is HEIC/HEIF, decode with `heif-dec` (or `vips copy in.heic out.png`). Then use prebuilt sharp: `.autoOrient().resize({width:1280,height:800,fit:'inside',withoutEnlargement:true}).jpeg({quality:80,mozjpeg:true})` plus a thumbnail. Do not call keepExif or withMetadata, so GPS is stripped. Store the capture date (EXIF DateTimeOriginal) in the database before stripping.",
+     "Video pipeline: probe with ffprobe. If color_transfer is arib-std-b67 or smpte2084, insert `zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p`. Base command: `ffmpeg -i in.mov -map 0:v:0 -map 0:a:0? -map_metadata -1 -vf \"scale=w=1280:h=720:force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuv420p\" -c:v libx264 -profile:v high -level:v 4.0 -preset medium -crf 23 -maxrate 4M -bufsize 8M -r 30 -c:a aac -b:a 128k -ac 2 -ar 48000 -movflags +faststart out.mp4`. Grab a poster at 1 s. A single 720p rendition suits the 1280\u00d7800 kiosk and is fine on phones; add 1080p later only if relatives ask. Cap ffmpeg with `-threads 2` and nice it, so the other PWAs on the box stay responsive.",
+     "Voice notes: record in Chromium with MediaRecorder (60 s cap enforced client-side and on the server), upload as one small request, and transcode to `-c:a aac -b:a 64k -ac 1 out.m4a` with -map_metadata -1, so every iPhone and Android plays it.",
+     "Job queue: a `jobs` table in the same SQLite database (id, kind, payload JSON, status, attempts, run_after, locked_at, error) and an in-process worker loop. Video runs at concurrency 1 and images at 2. Make jobs idempotent, reclaim stale locks at boot, and use exponential retry with a max attempt count. Push status to clients over SSE or the next poll. No Redis or BullMQ.",
+     "Backend: Fastify 5 on Node 24 LTS (or 26 once it is Active LTS on 2026-10-28) with better-sqlite3 13 (WAL mode). Replicate continuously with Litestream 0.5.17 to a separate R2 or B2 bucket, keep a nightly `sqlite3 .backup` snapshot, and test a restore. Choose PocketBase only if you value its admin UI, OTP and realtime more than controlling uploads, sessions and image handling. In that case pin the exact version, run tus and the ffmpeg worker beside it, swap the JS SDK to a cookie-based auth store, and raise the OTP and token durations. Move to Postgres only if several processes or hosts must write concurrently, or the homelab already runs a backed-up Postgres you want to consolidate on. Not for about 40 users.",
+     "Family auth: lead with an email code. Send a 6-digit numeric code valid for 10\u201315 min, limited to 5 attempts and rate-limited per email and per IP. In the same email, include a link that opens /signin/confirm, a page whose button POSTs the token, so scanners can't burn it. Make the email say 'Type this code in the app'. Use `<input autocomplete=\"one-time-code\" inputmode=\"numeric\">`. Sessions are persistent HttpOnly, Secure, SameSite=Lax cookies (Max-Age about 180 days, sliding renewal), never localStorage. An alternative for iOS onboarding is to sign in in Safari first and then Add to Home Screen, which copies the cookies (iOS 17.2+).",
+     "Grandma's kiosk: never email-auth it. Issue a long random device token (rotate or revoke it from an admin page), exchange it once at /grandma?device=\u2026 for a device-scoped session cookie, then redirect to strip the token from the URL. Run Raspberry Pi OS Trixie with Chromium at 152.0.7977.82 rpt2 or later. Add /etc/chromium/policies/managed/gma.json with AudioCaptureAllowedUrls and AutoplayAllowlist set to https://gma.4mn.org. Mount one <video> at a time and fully unload it between clips, and use a systemd watchdog that reloads the kiosk.",
+     "Email provider: start with Resend's free tier (3k/month, 100/day), or Cloudflare Email Service if 4mn.org is on Cloudflare DNS and Workers Paid is already in use (3k/month included, then $0.35 per 1k; beta). Send from a dedicated subdomain (e.g. mail.4mn.org or auth.4mn.org). Publish the provider's SPF include and DKIM CNAMEs, and a DMARC record at p=none with rua reporting, then move to quarantine once reports are clean. Turn off click and open tracking so links aren't rewritten.",
+     "Web push: use web-push 3.6.7 (or @block65/webcrypto-web-push). Generate VAPID keys once, keep them in a secrets file outside git with a backup, and set the subject to a real mailto:. Send declarative-format JSON ({\"web_push\":8030,\"notification\":{\"title\",\"body\",\"navigate\",\"tag\"}}) under 2 KB, with TTL 86400\u2013259200, a topic or tag to coalesce, and urgency normal. The service worker push handler must always call showNotification inside event.waitUntil. Delete subscriptions on 404/410. On every launch, call getSubscription() and, if permission is granted but the subscription is null or different, resubscribe silently and upsert it by endpoint. On iOS, show the enable button only when display-mode is standalone; otherwise show Add to Home Screen steps.",
+     "Cloudflare setup: keep the app and API on the Tunnel (orange-cloud), with SSE endpoints sending text/event-stream and nginx proxy_buffering off. Answer long operations with 202 and a job id. Put Cloudflare Access (free up to 50 users) only on a draft subdomain such as draft.gma.4mn.org, never on /grandma or production, and do the final iPhone install and push test on production without Access.",
+     "Before building, test on real devices: (1) pick a 4K HDR video on a current iPhone through accept='image/*,video/*' and record the file type, size and colour after 'Preparing\u2026'; (2) confirm a 150 MB plain POST gets a 413 through the tunnel and a tus upload with a 32 MB chunkSize succeeds; (3) play the 720p H.264 output in a 30-minute loop on the Pi's Chromium; (4) receive a push on an installed iPhone app after force-quitting it and again 7 days later."
+    ]
+   }
+  },
+  {
+   "key": "pi-kiosk",
+   "out": {
+    "facts": [
+     {
+      "topic": "OS release",
+      "claim": "The current Raspberry Pi OS images (64-bit Desktop, Full and Lite) are dated 6 Oct 2026. They are built on Debian 13 'trixie' with Linux 6.18; the October point release reports 6.18.50 LTS.",
+      "detail": "Trixie launched 2 Oct 2025. The June 2026 image moved the kernel from 6.12 to 6.18. 'Raspberry Pi OS 6.2' (14 Apr 2026) turned passwordless sudo off by default on new images only; existing installs keep it. Since Nov 2025 trixie images use cloud-init (user-data, network-config and meta-data on the FAT boot partition). Imager 2.x writes cloud-init config; commenters on the post say Imager 1.9.x cannot customise trixie images.",
+      "sources": [
+       "https://www.raspberrypi.com/software/operating-systems/",
+       "https://www.raspberrypi.com/news/trixie-the-new-version-of-raspberry-pi-os/",
+       "https://linuxiac.com/raspberry-pi-os-october-2026-update/ (linuxiac.com/?p=220616)",
+       "https://www.raspberrypi.com/news/a-security-update-for-raspberry-pi-os/",
+       "https://www.raspberrypi.com/news/cloud-init-on-raspberry-pi-os/"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Base image: flash 64-bit Lite (trixie, 2026-10-06) with Imager 2.x. Kiosk scripts must not assume passwordless sudo on a fresh image."
+     },
+     {
+      "topic": "Default display stack",
+      "claim": "labwc (Wayland) has been the default compositor on every Pi model since the Oct 2024 Bookworm release. raspi-config now offers only 'W1 X11' and 'W2 Labwc'; wayfire is gone and X11 is marked not recommended.",
+      "detail": "The docs say: 'From Raspberry Pi OS Bookworm onwards, all Raspberry Pi models run Wayland using labwc by default.' The Raspberry Pi archive carries labwc 0.20.2-1~bpo13+1, newer than Debian trixie's 0.8.3. Its rpd-wayland-core metapackage pulls in labwc, kanshi, swayidle, wlopm, wlr-randr and xwayland.",
+      "sources": [
+       "https://www.raspberrypi.com/documentation/computers/configuration.html",
+       "https://www.raspberrypi.com/news/a-new-release-of-raspberry-pi-os",
+       "https://archive.raspberrypi.com/debian/dists/trixie/main/binary-arm64/Packages.gz",
+       "https://qa.debian.org/madison.php?package=labwc"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Use a Wayland kiosk. X11 is a dead end for new builds."
+     },
+     {
+      "topic": "What Lite ships",
+      "claim": "Lite has no desktop and no PipeWire. It does include NetworkManager, rpi-connect-lite, rpi-swap, raspberrypi-sys-mods and cloud-init. unattended-upgrades is not installed.",
+      "detail": "From the pi-gen 'arm64' (trixie) branch, last commit 2026-10-06. stage2 lists ssh, network-manager, rpi-connect-lite, rpi-swap and raspberrypi-sys-mods. stage3 adds rpd-wayland-core. rpd-common (desktop) is what pulls in pipewire, pipewire-pulse, wireplumber and brightnessctl.",
+      "sources": [
+       "https://github.com/RPi-Distro/pi-gen/tree/arm64/stage2",
+       "https://archive.raspberrypi.com/debian/dists/trixie/main/binary-arm64/Packages.gz"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "On Lite, install chromium, cage (or labwc), pipewire, pipewire-pulse, wireplumber, fonts-noto-color-emoji and grim yourself. Decide deliberately whether to add unattended-upgrades."
+     },
+     {
+      "topic": "Official kiosk tutorial",
+      "claim": "Raspberry Pi's official kiosk tutorial targets the full desktop image (labwc). It adds a line to ~/.config/labwc/autostart: 'chromium <urls> --kiosk --noerrdialogs --disable-infobars --no-first-run --enable-features=OverlayScrollbar --start-maximized &' and uses wtype for key presses.",
+      "detail": "The page carries no date. It does not cover screen blanking or hiding the cursor. '--disable-infobars' no longer exists in Chromium's chrome_switches.h, so it does nothing.",
+      "sources": [
+       "https://www.raspberrypi.com/tutorials/how-to-use-a-raspberry-pi-in-kiosk-mode/",
+       "https://chromium.googlesource.com/chromium/src/+/refs/heads/main/chrome/common/chrome_switches.h"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Fine as a prototype on the desktop image. For the production build, use Lite plus cage, or Lite plus labwc."
+     },
+     {
+      "topic": "Raspberry Pi's own cage kiosk pattern",
+      "claim": "Raspberry Pi's rpi-image-gen has an example, examples/multi-user-kiosk (updated 2026-10-09), that runs Chromium full screen in cage. It installs seatd, puts the kiosk user in the video and render groups, and launches 'cage -- chromium URL --user-data-dir=... --kiosk --noerrdialogs --disable-infobars --no-first-run --start-maximized --password-store=basic'.",
+      "detail": "Raspberry Pi backported cage 0.3.1 into its trixie archive on 7\u20138 Sep 2026 (david.turner@raspberrypi.com), adding a dmabuf-feedback patch. The example keeps the Chromium profile in XDG_RUNTIME_DIR, which is RAM and is wiped at logout. The cage wiki documents a cage@tty1 systemd unit with Restart=always, User=, TTYPath and PAMName=cage, plus a pam_systemd PAM stack so logind creates a real session (XDG_RUNTIME_DIR).",
+      "sources": [
+       "https://github.com/raspberrypi/rpi-image-gen/tree/master/examples/multi-user-kiosk",
+       "https://archive.raspberrypi.com/debian/pool/main/c/cage/",
+       "https://github.com/cage-kiosk/cage/wiki/Starting-Cage-on-boot-with-systemd",
+       "https://github.com/cage-kiosk/cage/releases"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "cage on Lite is the leanest kiosk and Raspberry Pi itself uses it. Keep the profile on persistent storage (not the RAM directory) so the service-worker and IndexedDB cache survives reboots."
+     },
+     {
+      "topic": "cage vs labwc protocol support",
+      "claim": "cage 0.3.x implements the protocols behind wlr-randr (output management), grim (screencopy), wtype (virtual keyboard), idle-notify and idle-inhibit. It does not implement wlr-output-power-management, so wlopm will not work. labwc implements both output power management and screencopy.",
+      "detail": "cage hides the cursor only when the seat has no pointer capability, and it exits on output loss only when running nested. raspi-config's labwc screen blanking appends \"swayidle -w timeout 600 'wlopm --off \\*' resume 'wlopm --on \\*' &\" to ~/.config/labwc/autostart.",
+      "sources": [
+       "https://github.com/cage-kiosk/cage/blob/master/cage.c",
+       "https://github.com/cage-kiosk/cage/blob/master/seat.c",
+       "https://github.com/cage-kiosk/cage/blob/master/output.c",
+       "https://github.com/labwc/labwc/blob/master/src/server.c",
+       "https://github.com/RPi-Distro/raspi-config/blob/trixie/raspi-config"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Under cage, turn the screen off with sysfs bl_power (DSI) or 'wlr-randr --output X --off'. Pick labwc if you want DPMS-style wlopm or swayidle."
+     },
+     {
+      "topic": "Chromium package",
+      "claim": "The package is 'chromium', version 1:155.0.8059.79-1~deb13u1+rpt1, published 2026-10-18 by archive.raspberrypi.com. 'chromium-browser' is now an empty transitional package that depends on chromium.",
+      "detail": "Raspberry Pi's build carries epoch '1:', so Debian trixie-security's chromium 156.0.8078.47 never replaces it. Raspberry Pi pushes new builds several times a month (154.0.8037.57 on 09-29, .92 on 10-02, 155.0.8059.39 on 10-13, .79 on 10-18) and keeps older debs in the pool. rpi-chromium-mods (recommended) adds '--force-renderer-accessibility --enable-remote-extensions' via /etc/chromium.d/00-rpi-vars and an initial_preferences file (DuckDuckGo, an initial extension). Debian's /usr/bin/chromium wrapper sources /etc/chromium.d/*.",
+      "sources": [
+       "https://archive.raspberrypi.com/debian/pool/main/c/chromium/",
+       "https://archive.raspberrypi.com/debian/dists/trixie/main/binary-arm64/Packages.gz",
+       "https://qa.debian.org/madison.php?package=chromium",
+       "https://salsa.debian.org/chromium-team/chromium/-/raw/master/debian/scripts/chromium"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Install 'chromium'. Consider --no-install-recommends to skip rpi-chromium-mods. Pin or hold versions deliberately, and roll back from the Raspberry Pi pool if a build regresses."
+     },
+     {
+      "topic": "Chromium Wayland selection",
+      "claim": "Without --ozone-platform, Chromium checks for both Wayland and X11 displays. If both exist (Xwayland sets DISPLAY), XDG_SESSION_TYPE=='wayland' breaks the tie; otherwise Chromium falls back to x11.",
+      "detail": "From ui/linux/display_server_utils.cc on main: 'The session type may be unset (no logind) or describe another session ... so it only breaks ties.' Chrome 140 made the auto behaviour the default.",
+      "sources": [
+       "https://chromium.googlesource.com/chromium/src/+/refs/heads/main/ui/linux/display_server_utils.cc",
+       "https://www.omgubuntu.co.uk/2025/08/chrome-140-wayland-auto-detection-linux"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Always pass --ozone-platform=wayland in a systemd-launched kiosk. Otherwise it may silently run under Xwayland."
+     },
+     {
+      "topic": "Kiosk flags that work today",
+      "claim": "In current Chromium source, '--kiosk' skips the session-crashed ('Restore pages?') bubble, the bad-flags warning and other startup infobars: the comment reads 'Do not show any other info bars in Kiosk mode'. Several common flags no longer exist.",
+      "detail": "Exist: --kiosk, --noerrdialogs (base_switches.h), --no-first-run, --start-maximized, --app, --hide-crash-restore-bubble (documented for ChromeOS), --disable-pinch (components/input/switches.cc), --touch-events, --autoplay-policy (media_switches), --check-for-update-interval ('testing'), --disable-component-update, --auto-accept-camera-and-microphone-capture. Absent: --disable-infobars and --disable-session-crashed-bubble. --overscroll-history-navigation is now the feature OverscrollHistoryNavigation (use --disable-features=OverscrollHistoryNavigation). --use-fake-ui-for-media-stream is on the bad-flags list. FullPageOS (July 2026) removed --disable-features=TranslateUI as obsolete and moved to the TranslateEnabled=false policy.",
+      "sources": [
+       "https://chromium.googlesource.com/chromium/src/+/refs/heads/main/chrome/browser/ui/startup/infobar_utils.cc",
+       "https://chromium.googlesource.com/chromium/src/+/refs/heads/main/chrome/common/chrome_switches.h",
+       "https://chromium.googlesource.com/chromium/src/+/refs/heads/main/components/input/switches.cc",
+       "https://chromium.googlesource.com/chromium/src/+/refs/heads/main/content/public/common/content_features.cc",
+       "https://chromium.googlesource.com/chromium/src/+/refs/heads/main/chrome/browser/ui/startup/bad_flags_prompt.cc",
+       "https://github.com/guysoft/FullPageOS/commits/devel"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Use this flag set: --kiosk --ozone-platform=wayland --noerrdialogs --no-first-run --disable-pinch --disable-features=OverscrollHistoryNavigation --autoplay-policy=no-user-gesture-required --password-store=basic --user-data-dir=<persistent path>. Handle mic and translate through policies, not flags."
+     },
+     {
+      "topic": "Chromium enterprise policies",
+      "claim": "AudioCaptureAllowedUrls (chrome.* 29+, dynamic refresh, per profile) grants microphone access with no prompt to matching origins; the '*' pattern is not supported. Setting AudioCaptureAllowed=false turns prompts off and leaves capture only for the listed URLs.",
+      "detail": "Debian Chromium reads JSON files from /etc/chromium/policies/managed/ (FullPageOS ships disable_translate.json there). All of these names exist in policies.yaml on main: TranslateEnabled, PasswordManagerEnabled, PasswordLeakDetectionEnabled, AutofillAddressEnabled, AutofillCreditCardEnabled, BrowserSignin, SyncDisabled, MetricsReportingEnabled, DefaultBrowserSettingEnabled, PromotionsEnabled, BackgroundModeEnabled, SpellcheckEnabled, AutoplayAllowed, AutoplayAllowlist, DefaultNotificationsSetting, NotificationsAllowedForUrls, URLAllowlist, URLBlocklist, DeveloperToolsAvailability, IncognitoModeAvailability, BrowserGuestModeEnabled, BrowserAddPersonEnabled, RestoreOnStartup(URLs), AllowDinosaurEasterEgg, WebAppInstallForceList, ComponentUpdatesEnabled, EnableMediaRouter, PrivacySandboxPromptEnabled, DownloadRestrictions, PrintingEnabled, ScreenCaptureAllowed, VideoCaptureAllowedUrls, GenAiDefaultSettings, ShoppingListEnabled, SearchSuggestEnabled. 'HideRestoreDialogEnabled' does not exist. If the page calls a helper on 127.0.0.1, Local Network Access checks apply; LoopbackNetworkAllowedForUrls (146+) and LocalNetworkAccessAllowedForUrls (139+) exempt an origin.",
+      "sources": [
+       "https://chromium.googlesource.com/chromium/src/+/refs/heads/main/components/policy/resources/templates/policy_definitions/Miscellaneous/AudioCaptureAllowedUrls.yaml",
+       "https://chromium.googlesource.com/chromium/src/+/refs/heads/main/components/policy/resources/templates/policy_definitions/Miscellaneous/AudioCaptureAllowed.yaml",
+       "https://chromium.googlesource.com/chromium/src/+/refs/heads/main/components/policy/resources/templates/policies.yaml",
+       "https://chromium.googlesource.com/chromium/src/+/refs/heads/main/components/policy/resources/templates/policy_definitions/LocalNetworkAccessSettings/",
+       "https://github.com/guysoft/FullPageOS/blob/devel/src/modules/fullpageos/filesystem/root_init/etc/chromium/policies/managed/disable_translate.json"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Ship /etc/chromium/policies/managed/gma.json with: AudioCaptureAllowedUrls ['https://gma.4mn.org'], AudioCaptureAllowed false, TranslateEnabled false, PasswordManagerEnabled false, Autofill* false, BrowserSignin 0, SyncDisabled true, URLAllowlist [gma.4mn.org] plus URLBlocklist ['*'], AutoplayAllowlist, DeveloperToolsAvailability 2, and NotificationsAllowedForUrls (also nudges persist())."
+     },
+     {
+      "topic": "Remote debugging",
+      "claim": "From Chrome 136 (blog post of 17 Mar 2025), --remote-debugging-port and --remote-debugging-pipe are ignored when pointed at the default data directory. They must be paired with a non-default --user-data-dir.",
+      "detail": "The post says 'Chrome' and does not address unbranded Chromium. The change is in the shared code base, so assume it applies.",
+      "sources": [
+       "https://developer.chrome.com/blog/remote-debugging-port"
+      ],
+      "confidence": "medium",
+      "as_of": "2026-10-22",
+      "decision_impact": "Use a non-default --user-data-dir such as /var/lib/gma-kiosk/profile. Bind CDP to 127.0.0.1:9222 and reach it only through a Tailscale SSH tunnel."
+     },
+     {
+      "topic": "Official 10-inch display",
+      "claim": "Raspberry Pi's official Touch Display 2 10\" (announced 22 Jul 2026, $80, 1200\u00d71920 portrait-native, 10-point touch) needs a 4-lane DSI port. It is not compatible with a Raspberry Pi 4 (Pi 5 and suitable CM carriers only).",
+      "detail": "The 5\" and 7\" Touch Display 2 models use 2 lanes at 720\u00d71280.",
+      "sources": [
+       "https://www.omgubuntu.co.uk/2026/07/raspberry-pi-10-inch-touch-display",
+       "https://www.elektormagazine.com/news/raspberry-pi-touch-display-10",
+       "https://www.phoronix.com/news/10-inch-Raspberry-Pi-Touch-2"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "On a Pi 4 at 1280\u00d7800, buy a third-party 10.1\" panel, or move to a Pi 5 if you want the official 10\"."
+     },
+     {
+      "topic": "10.1\" 1280x800 DSI panel for Pi 4",
+      "claim": "The Waveshare 10.1inch DSI LCD (C) at 1280\u00d7800 is supported by Raspberry Pi's in-kernel overlay 'dtoverlay=vc4-kms-dsi-waveshare-panel,10_1_inch'. DSI1 is the default port, and touch uses the built-in Goodix driver. Brightness is software-controlled through /sys/class/backlight/*/brightness, 0\u2013255.",
+      "detail": "Waveshare's wiki lists the trixie and bookworm overlay under Pi 5/CM4/CM3, and documents the Pi 4B with its older Bullseye driver and a 15-pin FPC cable. It recommends 'wlr-randr --output DSI-2 --off' to turn the screen off. Power: at least 0.88 A input; backlight on about 520 mA, off about 150 mA.",
+      "sources": [
+       "https://www.waveshare.com/wiki/10.1inch_DSI_LCD_%28C%29",
+       "https://github.com/raspberrypi/linux/blob/rpi-6.18.y/arch/arm/boot/dts/overlays/README"
+      ],
+      "confidence": "medium",
+      "as_of": "2026-10-22",
+      "decision_impact": "DSI is the only option here with clean software dimming. Confirm the 10_1_inch overlay on a Pi 4 bench unit before buying a second panel."
+     },
+     {
+      "topic": "10.1\" HDMI + USB-touch panel",
+      "claim": "The Waveshare 10.1inch HDMI LCD (B) (1280\u00d7800, USB HID touch) adjusts brightness only through an OSD, a hardware PWM mod, or a proprietary USB backlight tool. That tool works only on Rev4.1 boards, ships as a Bookworm GUI binary, and has no trixie instructions. DDC/CI is not mentioned.",
+      "detail": "It draws about 750 mA with the backlight on. DDC/CI with ddcutil on a Pi 4 under vc4-kms is unverified, and cheap HDMI driver boards rarely implement it.",
+      "sources": [
+       "https://www.waveshare.com/wiki/10.1inch_HDMI_LCD_(B)",
+       "https://mitxela.com/projects/ddc-oled"
+      ],
+      "confidence": "medium",
+      "as_of": "2026-10-22",
+      "decision_impact": "With HDMI, plan for CSS dimming plus output off/on. Do not count on hardware dimming."
+     },
+     {
+      "topic": "Backlight sysfs",
+      "claim": "The kernel ABI defines brightness as 0..max_brightness and bl_power as 0 (on) or 4 (powerdown). raspberrypi-sys-mods (20260914) ships a udev rule that gives the video group write access to brightness.",
+      "detail": "brightnessctl is included with the desktop (rpd-common). Install it on Lite if you want it.",
+      "sources": [
+       "https://www.kernel.org/doc/Documentation/ABI/stable/sysfs-class-backlight",
+       "https://archive.raspberrypi.com/debian/pool/main/r/raspberrypi-sys-mods/"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "A kiosk user in the video group can dim or power off a DSI backlight without sudo."
+     },
+     {
+      "topic": "Screen blanking",
+      "claim": "The official docs offer a Control Centre toggle or raspi-config '2 Display Options > D2 Screen Blanking'. Both write a swayidle/wlopm line into ~/.config/labwc/autostart, with a default of 600 s.",
+      "detail": "Other documented options: 'consoleblank=0' in /boot/firmware/cmdline.txt for the console; 'vc4.force_hotplug=1' for spurious 'NO SIGNAL' wakeups; and 'WAYLAND_DISPLAY=wayland-1 wlr-randr --output HDMI-A-1 --off|--on'.",
+      "sources": [
+       "https://www.raspberrypi.com/documentation/computers/configuration.html",
+       "https://github.com/RPi-Distro/raspi-config/blob/trixie/raspi-config"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Turn idle blanking off and drive night mode from an explicit schedule instead."
+     },
+     {
+      "topic": "Chromium idle inhibit",
+      "claim": "Chromium's Wayland backend suspends the screensaver through zwp_idle_inhibit_manager (WaylandScreen::SetScreenSaverSuspended). That is the mechanism behind the Wake Lock API and video playback.",
+      "sources": [
+       "https://chromium.googlesource.com/chromium/src/+/refs/heads/main/ui/ozone/platform/wayland/host/wayland_screen.cc"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "swayidle-based night blanking will never fire while a video plays or the page holds a screen wake lock. Schedule night mode explicitly."
+     },
+     {
+      "topic": "Overlay filesystem",
+      "claim": "raspi-config's overlay option installs the 'overlayroot' package and prepends 'overlayroot=tmpfs' to cmdline.txt. Every change outside /boot then lives in RAM and is lost at reboot. Write-protecting the boot partition is a separate fstab 'ro' option.",
+      "detail": "raspi-config refuses on systems with 256 MB of RAM or less. By default overlayroot also overlays other mounts under /; 'overlayroot=tmpfs:recurse=0' keeps, for example, an ext4 /data partition writable.",
+      "sources": [
+       "https://github.com/RPi-Distro/raspi-config/blob/trixie/raspi-config",
+       "https://www.raspberrypi.com/documentation/computers/configuration.html",
+       "https://spin.atomicobject.com/protecting-ubuntu-root-filesystem/"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Under a plain overlay, the Chromium profile (service worker, Cache Storage, IndexedDB, device cookie), Tailscale identity, timesyncd clock and wireplumber defaults reset every boot. Either skip the overlay, or use recurse=0 with a writable /data partition for that state."
+     },
+     {
+      "topic": "Watchdog, logs and swap defaults",
+      "claim": "Raspberry Pi OS enables the hardware watchdog out of the box: the base DTB's 'watchdog' parameter defaults to on, and raspberrypi-sys-mods sets RuntimeWatchdogSec=1m and RebootWatchdogSec=2m. journald runs with Storage=volatile, and rpi-swap's Mechanism=auto means zram+file.",
+      "detail": "zram+file writes idle pages to /var/swap only occasionally, on a timer, to reduce SD wear. With volatile journald, logs disappear on reboot.",
+      "sources": [
+       "https://github.com/raspberrypi/linux/blob/rpi-6.18.y/arch/arm/boot/dts/overlays/README",
+       "https://archive.raspberrypi.com/debian/pool/main/r/raspberrypi-sys-mods/",
+       "https://archive.raspberrypi.com/debian/pool/main/r/rpi-swap/"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "No watchdog setup is needed. Logs vanish at reboot, so ship kiosk logs or heartbeats to the server, or persist journald with a size cap."
+     },
+     {
+      "topic": "Boot media and power",
+      "claim": "The Pi 4 boots from USB mass storage by default once it is in BOOT_ORDER. The default 0xf41 tries SD first, then USB. The recommended supply is 3.0 A, and USB peripherals may draw at most 1.2 A in total.",
+      "sources": [
+       "https://github.com/raspberrypi/documentation/blob/master/documentation/asciidoc/computers/raspberry-pi/boot-msd.adoc",
+       "https://github.com/raspberrypi/documentation/blob/master/documentation/asciidoc/computers/raspberry-pi/eeprom-bootloader.adoc",
+       "https://github.com/raspberrypi/documentation/blob/master/documentation/asciidoc/computers/raspberry-pi/power-supplies.adoc"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "A USB3 SSD works without EEPROM changes. Power an HDMI panel separately: its ~750 mA plus an SSD and a mic can exceed the 1.2 A USB budget."
+     },
+     {
+      "topic": "NetworkManager reconnect",
+      "claim": "connection.autoconnect-retries defaults to -1, which means the global default of 4 attempts; 'after a timeout' NetworkManager tries again, and 0 means retry forever. wifi.powersave=2 turns Wi-Fi power saving off.",
+      "detail": "Raspberry Pi's raspberrypi-net-mods 1.4.4 only sets wifi.scan-rand-mac-address=no; it does not touch power saving. The NetworkManager docs do not state the length of the re-autoconnect timeout.",
+      "sources": [
+       "https://networkmanager.dev/docs/api/latest/nm-settings-nmcli.html",
+       "https://archive.raspberrypi.com/debian/pool/main/r/raspberrypi-net-mods/"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Run: nmcli con mod <ssid> connection.autoconnect-retries 0 wifi.powersave 2. Add a connectivity watchdog for the cases NetworkManager does not catch."
+     },
+     {
+      "topic": "Clock after power loss",
+      "claim": "The Pi 4 has no RTC. systemd-timesyncd advances the clock at boot to the mtime of /var/lib/systemd/timesync/clock. Only systemd-time-wait-sync.service, via time-sync.target, waits for real NTP sync.",
+      "sources": [
+       "https://www.freedesktop.org/software/systemd/man/latest/systemd-timesyncd.service.html"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Under an overlay the clock file resets, and TLS to gma.4mn.org can fail with cert-date errors until NTP syncs. Order the kiosk after time-sync.target with a timeout, or keep that file persistent."
+     },
+     {
+      "topic": "Chromium storage quota and persistence",
+      "claim": "In Chromium an origin may use up to 60% of total disk size and the browser 80%. Under storage pressure, best-effort origins are evicted whole, least-recently-used first; persistent origins are skipped.",
+      "detail": "navigator.storage.persist() is granted or denied silently, with no prompt. The heuristics are site engagement, installed or bookmarked, and notification permission granted (web.dev, 2020; MDN, Jan 2026). Quota is computed from total disk size, not free space.",
+      "sources": [
+       "https://developer.mozilla.org/en-US/docs/Web/API/Storage_API/Storage_quotas_and_eviction_criteria",
+       "https://web.dev/articles/storage-for-the-web",
+       "https://web.dev/articles/persistent-storage"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "A 32 GB card gives about 19 GB of quota, plenty for a rolling media cache. Call persist(), and grant notifications via policy or force-install the PWA to meet the heuristics. Keep an app-level LRU cap anyway."
+     },
+     {
+      "topic": "Background Sync",
+      "claim": "Chrome and Chromium have supported the Background Sync API (SyncManager) since version 49. Safari and Firefox do not.",
+      "sources": [
+       "https://caniuse.com/background-sync"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "It works on the kiosk. The page is always open, though, so an IndexedDB outbox retried on 'online' and on a timer is simpler and easier to test."
+     },
+     {
+      "topic": "Tailscale on a headless device",
+      "claim": "Node keys expire after 180 days by default. Tagged devices get key expiry disabled automatically, and expiry can also be disabled per device in the admin console. 'tailscale set --ssh' turns on Tailscale SSH.",
+      "detail": "The default SSH policy rule uses action 'check' with a 12 h checkPeriod and dst autogroup:self; reaching a tag needs an explicit rule. Auto-update: 'tailscale set --auto-update'; it is on by default for tailnets created after Feb 2024. For read-only filesystems, 'tailscaled --state=mem:' or ephemeral keys register an ephemeral node, auto-removed 30\u201360 min after going inactive.",
+      "sources": [
+       "https://tailscale.com/kb/1028/key-expiry",
+       "https://tailscale.com/kb/1193/tailscale-ssh",
+       "https://tailscale.com/kb/1067/update",
+       "https://tailscale.com/kb/1111/ephemeral-nodes"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Join with a tagged auth key (tag:gma-kiosk), --ssh and --auto-update. Add an SSH rule with action 'accept' for Ben. Keep /var/lib/tailscale on persistent storage unless you deliberately go ephemeral."
+     },
+     {
+      "topic": "Raspberry Pi Connect",
+      "claim": "Lite includes rpi-connect-lite (remote shell only, no screen sharing), disabled by default. Personal accounts are free. Connect can push remote updates: otamaker script artefacts that run as root on stock Raspberry Pi OS, and A/B whole-OS images built with rpi-image-gen for Pi 4 and later.",
+      "detail": "A personal account's uploaded artefact is deleted after 2 hours if the device has not started the deployment. Connect signs its traffic with the device serial, so moving the SD card signs it out.",
+      "sources": [
+       "https://github.com/raspberrypi/documentation/blob/master/documentation/asciidoc/services/connect/introduction.adoc",
+       "https://github.com/raspberrypi/documentation/blob/master/documentation/asciidoc/services/connect/install.adoc",
+       "https://github.com/raspberrypi/documentation/blob/master/documentation/asciidoc/services/connect/remote-update.adoc",
+       "https://github.com/raspberrypi/documentation/blob/master/documentation/asciidoc/services/connect/ab-boot-update.adoc"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "A possible backup way in. Tailscale already covers remote access, so leave Connect off or remove it unless you want its OTA path."
+     },
+     {
+      "topic": "unattended-upgrades scope",
+      "claim": "unattended-upgrades' default Debian config upgrades only origin=Debian (label Debian or Debian-Security). Raspberry Pi's archive has Origin 'Raspberry Pi Foundation', so Chromium, kernel and firmware from it are never upgraded automatically unless you add that origin.",
+      "sources": [
+       "https://github.com/mvo5/unattended-upgrades/blob/master/data/50unattended-upgrades.Debian",
+       "https://archive.raspberrypi.com/debian/dists/trixie/Release"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Either accept a stale browser locked to one origin by URLAllowlist, or add the Raspberry Pi origin and take several Chromium bumps a month. A scheduled, health-checked maintenance script sits between the two."
+     },
+     {
+      "topic": "Audio stack",
+      "claim": "Chromium depends on libpulse0, so on PipeWire systems it needs pipewire-pulse. The Raspberry Pi archive ships pipewire 1.4.2-1+rpt4; the desktop gets pipewire, pipewire-pulse and wireplumber through rpd-common, and Lite gets none.",
+      "detail": "The ReSpeaker USB Mic Array v2.0 (XVF-3000) works as a driverless UAC 1.0 device. Its 1-channel firmware gives processed audio; the 6-channel firmware adds raw mics and a playback reference, and Seeed's AEC demo routes playback through the device. Chromium's software echo canceller most likely has a reference only for audio Chromium itself plays; that is an inference, not documented.",
+      "sources": [
+       "https://archive.raspberrypi.com/debian/dists/trixie/main/binary-arm64/Packages.gz",
+       "https://wiki.seeedstudio.com/ReSpeaker_Mic_Array_v2.0",
+       "https://gitlab.freedesktop.org/pipewire/pipewire/-/issues/2165"
+      ],
+      "confidence": "medium",
+      "as_of": "2026-10-22",
+      "decision_impact": "Install the PipeWire trio on Lite and run the kiosk inside a logind session so user services start. Pause playback while recording, which makes echo cancellation largely moot."
+     },
+     {
+      "topic": "Emoji font",
+      "claim": "fonts-noto-color-emoji 2.051-0+deb13u1 is in Debian trixie. None of Raspberry Pi's metapackages or chromium-common depend on it.",
+      "sources": [
+       "https://qa.debian.org/madison.php?package=fonts-noto-color-emoji",
+       "https://archive.raspberrypi.com/debian/dists/trixie/main/binary-arm64/Packages.gz"
+      ],
+      "confidence": "high",
+      "as_of": "2026-10-22",
+      "decision_impact": "Install it explicitly, or emoji reactions render as empty boxes. Also consider bundling an emoji webfont or SVGs so every device renders the same."
+     },
+     {
+      "topic": "Video decode on Pi 4",
+      "claim": "The Pi 4's H.264 hardware decoder is limited to 1080p, and its HEVC decoder does not support 10-bit (Raspberry Pi engineer 6by9, Nov 2025). Chrome plays HEVC on Linux only through hardware (VAAPI-class) decoding and has no software fallback.",
+      "detail": "No current source confirms that Raspberry Pi's Chromium uses the V4L2 hardware decoders on a Pi 4. Check chrome://gpu on the device.",
+      "sources": [
+       "https://github.com/raspberrypi/linux/issues/7137",
+       "https://streaminglearningcenter.com/?p=17448",
+       "https://blog.wmspanel.com/2022/10/hevc-support-chrome.html"
+      ],
+      "confidence": "medium",
+      "as_of": "2026-10-22",
+      "decision_impact": "iPhone videos (HEVC, often 10-bit HDR) and HEIC photos must be transcoded on the server. Use 8-bit H.264/AAC MP4 at 720p, or at most 1080p, with faststart, and JPEG/WebP sized for 1280\u00d7800."
+     },
+     {
+      "topic": "Native alternatives",
+      "claim": "Electron v45.0.0 (2026-10-21) ships linux-arm64 builds, with a new major every 8 weeks and only the latest 3 majors supported. Tauri 2.12.5 (2026-10-21) uses WebKitGTK on Linux (trixie: 2.52.6, security 2.54.0). flutter-pi 1.1.1 (2026-01-31) runs without X11 or Wayland on KMS and plays video through GStreamer. Qt WebEngine in trixie is 6.8.2 (6.10.2 in backports).",
+      "detail": "For Tauri/WebKitGTK, getUserMedia needs a permission-request handler and GStreamer plugins; Tauri discussions describe WebRTC/media as hacky. flutter-pi has no web runtime, so no service worker or Web Push model, and would mean a native rewrite of the Grandma view.",
+      "sources": [
+       "https://github.com/electron/electron/releases",
+       "https://www.electronjs.org/docs/latest/tutorial/electron-timelines",
+       "https://github.com/tauri-apps/tauri/releases",
+       "https://github.com/tauri-apps/tauri/discussions/8426",
+       "https://github.com/ardera/flutter-pi",
+       "https://qa.debian.org/madison.php?package=qt6-webengine"
+      ],
+      "confidence": "medium",
+      "as_of": "2026-10-22",
+      "decision_impact": "The Chromium kiosk PWA has the lowest update burden: one codebase, browser updates via apt, app updates by deploying the site. Electron is the only alternative worth considering, and it trades policies for code you must re-release every 8 weeks."
+     }
+    ],
+    "gotchas": [
+     "Raspberry Pi's official 10\" Touch Display 2 (July 2026) needs 4-lane DSI and does not work on a Pi 4. Buy a third-party 10.1\" 1280\u00d7800 panel, or use a Pi 5.",
+     "Raspberry Pi's own kiosk tutorial and its rpi-image-gen example still pass --disable-infobars. The flag no longer exists in Chromium, and neither does --disable-session-crashed-bubble. What actually suppresses the crash-restore bubble today is --kiosk itself (infobar_utils.cc). Clean shutdowns still matter.",
+     "If both Wayland and Xwayland are present and XDG_SESSION_TYPE is not 'wayland' (typical for a systemd-started compositor), Chromium falls back to X11 through Xwayland. Always pass --ozone-platform=wayland.",
+     "raspi-config's overlay is 'overlayroot=tmpfs' over the whole root. Every boot wipes the Chromium profile (service worker, Cache Storage, IndexedDB, the device-token cookie), Tailscale's node identity, timesyncd's clock file and wireplumber's default devices. Quota is then computed from the tmpfs, and the cache eats RAM.",
+     "With no RTC and the clock file lost or stale, the first page load after a power cut can fail TLS with a cert-date error. A Chromium error page does not reliably recover by itself.",
+     "cage does not implement wlr-output-power-management, so wlopm and raspi-config's swayidle blanking do nothing under cage. Use bl_power (DSI) or 'wlr-randr --off'.",
+     "cage shows a cursor whenever a pointer device exists. Many USB touch controllers on HDMI panels also present a mouse interface. Set CSS 'cursor: none' in the Grandma view.",
+     "Chromium holds a Wayland idle inhibitor during video and while a screen wake lock is held, so idle-based night blanking never fires. Waking the screen with a tap also delivers that tap to the page, which could fire a reaction. Swallow the first tap after night mode.",
+     "Long-press on a touchscreen opens Chromium's context menu ('Save image as\u2026'). Pinch-zoom and swipe-back navigation are also on by default. Use --disable-pinch and --disable-features=OverscrollHistoryNavigation, plus CSS touch-action/overscroll-behavior/user-select and preventDefault on contextmenu and dragstart.",
+     "AudioCaptureAllowedUrls does not accept '*'. Use the exact origin, https://gma.4mn.org. --use-fake-ui-for-media-stream is on Chromium's bad-flags list; use the policy instead.",
+     "If the Grandma page ever fetches a helper on 127.0.0.1 (for example to set brightness), Chrome's Local Network Access check prompts or blocks unless the origin is listed in LoopbackNetworkAllowedForUrls (146+). A Pi-side agent that polls the server avoids this.",
+     "Chrome 136+ ignores --remote-debugging-port on the default profile directory. Use a non-default --user-data-dir if you want CDP-based reload or screenshots.",
+     "Lite ships no PipeWire. Chromium needs pipewire-pulse inside a real logind user session (XDG_RUNTIME_DIR); a bare system service has no audio. With a DSI panel there is no HDMI audio, so speakers must use the 3.5 mm jack or USB.",
+     "iPhone uploads are HEVC (often 10-bit HDR) and HEIC. Chromium on Linux cannot software-decode HEVC, and the Pi 4 hardware decoder lacks 10-bit. Full-size 48 MP JPEGs also cost about 190 MB of RAM each when decoded. Transcode and resize on the server.",
+     "Voice notes recorded by Chromium's MediaRecorder on Linux come out as audio/webm (Opus). Older iPhones (iOS below 17.4) play WebM only partially, so transcode to AAC/M4A on the server for family playback.",
+     "raspberrypi-sys-mods keeps journald volatile, so the logs from the crash that triggered a watchdog reboot are gone after it.",
+     "systemd's default start limit (5 starts in 10 s) can permanently fail a crash-looping kiosk unit. Use RestartSec=5 and StartLimitIntervalSec=0.",
+     "Pi 4 USB peripherals share 1.2 A. A USB-powered HDMI panel (~750 mA) plus an SSD and a mic array can brown out. Use the official 3 A supply and power the panel separately.",
+     "Tailscale SSH's default rule is 'check' mode with a 12 h re-auth, and it only covers autogroup:self. A tagged kiosk needs an explicit 'accept' rule for Ben, or remote fixes stall on browser re-auth.",
+     "New trixie images (6.2+) disable passwordless sudo. Maintenance scripts run over SSH should run as root or through a narrow sudoers drop-in.",
+     "unattended-upgrades never updates Chromium or the kernel from archive.raspberrypi.com by default. Adding that origin brings several Chromium builds a month to an unattended screen. Debian-security's chromium never overrides Raspberry Pi's, because of the 1: epoch.",
+     "Raspberry Pi Imager 1.9.x reportedly cannot customise trixie images, which now use cloud-init. Use Imager 2.x, or write user-data and network-config to the boot partition yourself.",
+     "A Raspberry Pi Connect remote-update artefact on a personal account expires 2 hours after upload if the device is offline. Do not rely on it for a Pi that may be unplugged."
+    ],
+    "recommendations": [
+     "Hardware: Pi 4 (4 GB), the official 3 A USB-C supply, and a USB3 SSD or a high-endurance A2 card (the default BOOT_ORDER 0xf41 already falls back to USB). For hardware night dimming, use the Waveshare 10.1inch DSI LCD (C) with 'dtoverlay=vc4-kms-dsi-waveshare-panel,10_1_inch', after bench-testing on a Pi 4. If you choose an HDMI + USB-touch panel instead, power it separately and plan for CSS-only dimming.",
+     "OS: Raspberry Pi OS Lite 64-bit (trixie, 2026-10-06) flashed with Imager 2.x (cloud-init). Then: apt install chromium cage pipewire pipewire-pulse wireplumber fonts-noto-color-emoji grim wlr-randr brightnessctl (add --no-install-recommends to skip rpi-chromium-mods).",
+     "Kiosk session: follow Raspberry Pi's own rpi-image-gen multi-user-kiosk pattern and the cage wiki. A system unit cage@tty1.service with User=kiosk, PAMName (pam_systemd, so PipeWire user services and XDG_RUNTIME_DIR exist), Restart=always, RestartSec=5, StartLimitIntervalSec=0, After=time-sync.target network-online.target (wrap the time wait in a short timeout), and the kiosk user in the video and render groups.",
+     "Launch line: cage -d -- chromium --ozone-platform=wayland --kiosk --noerrdialogs --no-first-run --password-store=basic --disable-pinch --disable-features=OverscrollHistoryNavigation --autoplay-policy=no-user-gesture-required --user-data-dir=/var/lib/gma-kiosk/profile [--remote-debugging-port=9222] 'https://gma.4mn.org/grandma?device=<token>', with the URL kept in /etc/default/gma-kiosk. Before launch, patch Preferences exit_type to 'Normal' as extra protection against restore UI.",
+     "Policies in /etc/chromium/policies/managed/gma.json: AudioCaptureAllowedUrls ['https://gma.4mn.org'], AudioCaptureAllowed false, AutoplayAllowlist ['https://gma.4mn.org'], NotificationsAllowedForUrls ['https://gma.4mn.org'] (helps persist()), TranslateEnabled false, PasswordManagerEnabled false, AutofillAddressEnabled false, AutofillCreditCardEnabled false, BrowserSignin 0, SyncDisabled true, MetricsReportingEnabled false, PromotionsEnabled false, SpellcheckEnabled false, DeveloperToolsAvailability 2, IncognitoModeAvailability 1, BrowserGuestModeEnabled false, AllowDinosaurEasterEgg false, EnableMediaRouter false, URLBlocklist ['*'] with URLAllowlist ['gma.4mn.org'], and RestoreOnStartup 4 with RestoreOnStartupURLs set to the Grandma URL.",
+     "Night mode: keep the schedule in the web app, configured server-side, and always apply a CSS dim overlay that swallows the first tap. Add a small Pi-side systemd agent, run as the kiosk user, that polls https://gma.4mn.org/api/device/<token>/display over HTTPS. It writes /sys/class/backlight/*/brightness and bl_power (DSI), or runs wlr-randr --off/--on (HDMI). That keeps hardware control off localhost and away from Local Network Access prompts. Disable idle blanking: no swayidle, and consoleblank=0.",
+     "Storage: launch without overlayroot. Plain ext4 on SSD, zram+file swap (the default) and Chromium's cache are fine; cap journald (SystemMaxUse=50M) if you make it persistent, or ship heartbeats and logs to the server. If you later want power-loss immunity, use 'overlayroot=tmpfs:recurse=0' with a separate ext4 /data partition holding the Chromium profile, /var/lib/tailscale, the timesyncd clock and wireplumber state.",
+     "Resilience: rely on the built-in watchdog (RuntimeWatchdogSec=1m is already the default). Run nmcli con mod <ssid> connection.autoconnect-retries 0 wifi.powersave 2. Add a connectivity watchdog timer: if HTTPS to /healthz fails 3 times, toggle the Wi-Fi radio; after 10 min, restart NetworkManager; after 30 min, reboot. Restart the kiosk unit nightly (e.g. 03:30) to clear Chromium memory growth. Have the page send heartbeats so the server can alert Ben when Grandma's screen goes quiet.",
+     "Offline media: a service worker caches the app shell. Keep a bounded LRU Cache Storage of recently shown media, call navigator.storage.persist(), and put reactions, preset messages and voice notes in an IndexedDB outbox that retries on 'online' and on a timer. Treat Background Sync as an optional extra.",
+     "Remote management: join Tailscale with a tagged auth key (tag:gma-kiosk; tagging disables key expiry) using 'tailscale up --ssh' and 'tailscale set --auto-update', and add an SSH 'accept' rule for Ben. Screenshots: run grim as the kiosk user with XDG_RUNTIME_DIR/WAYLAND_DISPLAY set. Reload, in order of preference: a server-sent 'reload' command over SSE/WebSocket, then 'wtype -k F5' or 'systemctl restart cage@tty1', then CDP on 127.0.0.1:9222 through an SSH tunnel.",
+     "Updates: do not add the Raspberry Pi origin to unattended-upgrades. Instead, a monthly (or Ben-triggered) maintenance script runs apt full-upgrade, restarts the kiosk, checks for a page heartbeat, and rolls back by reinstalling the previous chromium deb from archive.raspberrypi.com if the check fails. Keep a pi/ folder in the gma repo with an idempotent install.sh, units and policies, pulled by a systemd timer from the homelab git over Tailscale and deployed only on a signed tag.",
+     "Media pipeline on the server, in support of the Pi: convert HEIC to JPEG/WebP at about 1920 px on the long edge. Transcode videos to 8-bit H.264 High plus AAC in MP4 with +faststart at 720p (at most 1080p). Transcode Grandma's webm/Opus voice notes to AAC/M4A for family devices, keeping the original.",
+     "Audio: prefer a single USB speakerphone (UAC, with hardware AEC, one device for mic and speaker), or a ReSpeaker or XVF-class USB array plus the 3.5 mm jack. Pin the default sink and source with a wireplumber config drop-in in the image, not with 'wpctl set-default' state. Pause all playback while recording.",
+     "Stay with the Chromium-kiosk PWA. Choose Electron (linux-arm64) only if a native capability becomes essential, accepting an 8-week major cadence. Avoid Tauri/WebKitGTK because microphone and WebRTC support there is fragile, and avoid flutter-pi unless you are willing to rewrite the Grandma view natively."
+    ]
+   }
+  }
+ ],
+ "check": {
+  "checks": [
+   {
+    "claim": "Cloudflare's maximum request body is 100 MB on Free and Pro, 200 MB on Business and up to 5 GB self-serve on Enterprise. Oversized requests get a 413 at the edge, and very large uploads can also fail on connection or read timeouts before they reach the size limit.",
+    "verdict": "confirmed",
+    "correction": "Correct as stated. The Workers limits page says the cap depends on the account plan, not the Workers plan. The Cache docs repeat the numbers, quote 'Requests that exceed the connection or read timeout can fail mid-upload before reaching the size limit', and suggest three workarounds: chunking, a DNS-only record, or a plan upgrade.",
+    "sources": [
+     "https://developers.cloudflare.com/workers/platform/limits/",
+     "https://developers.cloudflare.com/cache/concepts/default-cache-behavior/"
+    ]
+   },
+   {
+    "claim": "The 100 MB cap also applies to Cloudflare Tunnel hostnames. The only bypasses are a grey-cloud DNS record (which exposes the home IP) or Tailscale.",
+    "verdict": "partly",
+    "correction": "The cap does apply to Tunnel. Cloudflare's docs never name Tunnel, but a tunnel hostname is always proxied, and Immich's docs, Immich and Nextcloud threads and several guides all report 413s at 100 MB through tunnels. The 'only bypasses' part is wrong. Chunked or resumable uploads with each chunk under 100 MB (for example tus with chunkSize around 50 MB) pass through the tunnel. So do browser-direct presigned PUTs or multipart uploads to R2's S3 endpoint, which is not a proxied zone and allows 5 GiB in a single part. Cloudflare's own Cache docs list chunking as a workaround.",
+    "sources": [
+     "https://developers.cloudflare.com/cache/concepts/default-cache-behavior/",
+     "https://github.com/immich-app/immich/discussions/13573",
+     "https://developers.cloudflare.com/r2/platform/limits/"
+    ]
+   },
+   {
+    "claim": "Proxy read timeout is 125 s (524; changeable only on Enterprise). Proxy write timeout is 30 s and proxy idle timeout is 900 s (520).",
+    "verdict": "partly",
+    "correction": "The values are right, and 125 s supersedes the older 100 s figure. The status codes need fixing: the write timeout returns 524, and only the idle timeout returns 520. For Tunnel, the page points to cloudflared's origin configuration, so tunnel-side timeouts are a separate setting. Either way, transcoding has to be an async job, never inline in the upload request.",
+    "sources": [
+     "https://developers.cloudflare.com/fundamentals/reference/connection-limits/"
+    ]
+   },
+   {
+    "claim": "Tunnel buffers responses unless the origin sends Content-Type: text/event-stream.",
+    "verdict": "confirmed",
+    "correction": "The docs quote: 'is buffered by default unless the origin server includes the Content-Type: text/event-stream response header.' This matters for PocketBase realtime (SSE) and any streamed progress responses.",
+    "sources": [
+     "https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/troubleshoot-tunnels/common-errors/"
+    ]
+   },
+   {
+    "claim": "The Service-Specific Terms CDN section (last updated 2026-09-28) say non-Enterprise customers must use Paid Services (Developer Platform such as R2, Images, Stream) to serve video and large files. Cloudflare may limit the CDN otherwise, and the text does not distinguish cached from uncached or authenticated content.",
+    "verdict": "confirmed",
+    "correction": "Confirmed, with the 'Last updated September 28, 2026' date. The terms name '(e.g., the Developer Platform, Images, and Stream)'. R2 is not named in the terms; it counts only as part of the Developer Platform, and the 2023 blog names it. There is no cached/uncached or authenticated distinction and no published threshold. Serving family video straight from the homelab through the tunnel is therefore within the restricted case. Serving it from an R2 custom domain is the compliant path.",
+    "sources": [
+     "https://www.cloudflare.com/service-specific-terms-application-services/",
+     "https://blog.cloudflare.com/updated-tos/"
+    ]
+   },
+   {
+    "claim": "Free, Pro and Business zones can cache files up to 512 MB. MP4 and WEBM are cached by default, MOV is not.",
+    "verdict": "confirmed",
+    "correction": "Correct. Enterprise caches 5 GB by default. Caching goes by file extension, not MIME type.",
+    "sources": [
+     "https://developers.cloudflare.com/cache/concepts/default-cache-behavior/"
+    ]
+   },
+   {
+    "claim": "R2 pricing: Standard storage $0.015/GB-month, Class A $4.50 per million, Class B $0.36 per million, free egress. The free tier covers 10 GB-month, 1M Class A and 10M Class B. Infrequent Access is $0.01/GB-month plus $0.01/GB retrieval with a 30-day minimum. Deletes and aborts are free.",
+    "verdict": "confirmed",
+    "correction": "All confirmed. The claim leaves out two things. Infrequent Access operations cost more ($9.00 per million Class A, $0.90 per million Class B). The free tier applies only to Standard storage, not Infrequent Access.",
+    "sources": [
+     "https://developers.cloudflare.com/r2/pricing/"
+    ]
+   },
+   {
+    "claim": "R2 presigned URLs support GET, HEAD, PUT and DELETE but not POST. Maximum expiry is 7 days. They work only on the S3 endpoint, not custom domains, and need CORS for browser use. Single uploads go up to 5 GiB; multipart allows 10,000 parts and 4.995 TiB. Worker uploads are capped by Workers request limits. A custom domain must be in the same account, r2.dev must be disabled when gating it, and WAF token auth needs Pro or above.",
+    "verdict": "confirmed",
+    "correction": "All confirmed against the presigned-URL, limits, public-bucket and token-authentication pages. That page says is_timed_hmac_valid_v0 'requires a Cloudflare Pro, Business, or Enterprise plan'. On a Free zone, protected media from R2 needs presigned GETs (S3 domain only) or Access, not WAF tokens.",
+    "sources": [
+     "https://developers.cloudflare.com/r2/api/s3/presigned-urls/",
+     "https://developers.cloudflare.com/r2/platform/limits/",
+     "https://developers.cloudflare.com/r2/buckets/public-buckets/",
+     "https://developers.cloudflare.com/waf/custom-rules/use-cases/configure-token-authentication/"
+    ]
+   },
+   {
+    "claim": "In iOS WebKit, accept='image/*' (or no accept) delivers the original HEIC. Library videos are always re-encoded on the phone to H.264 QuickTime (.MOV) with AVAssetExportPresetHighestQuality behind a 'Preparing\u2026' sheet, at full resolution. Camera-captured photos become JPEG at 0.8 quality.",
+    "verdict": "confirmed",
+    "correction": "The code backs this up. _preferredAssetRepresentationMode returns Current when accept is empty or contains public.image, and Compatible otherwise. In Current mode WebKit itself transcodes video to AVFileTypeQuickTimeMovie with AVAssetExportPresetHighestQuality ('Preparing\u2026' title). In Compatible mode WebKit does not transcode; PhotosUI supplies a compatible rendition instead. The 2024-03-05 commit says 'Video is still transcoded to H.264 for compatibility.' The switch is WebKit's own delegate in WKContentViewInteraction behind a preference, not Safari-only code, so it most likely applies inside Home Screen web apps too. Two exceptions: camera photos without a file URL become JPEG at 0.8, and single-select UIImagePicker results skip the transcoder. Expect 4K H.264 .MOV files at least as large as the HEVC originals.",
+    "sources": [
+     "https://github.com/WebKit/WebKit/blob/main/Source/WebKit/UIProcess/ios/forms/WKFileUploadPanel.mm",
+     "https://www.mail-archive.com/webkit-changes@lists.webkit.org/msg211341.html"
+    ]
+   },
+   {
+    "claim": "sharp's prebuilt binaries have no HEIC support. sharp 0.35.5 (2026-09-27) needs a global libvips >= 8.18.7. Debian trixie ships 8.16.1, so a global-libvips sharp works on stable Debian only with sharp <= 0.34.2, or on Alpine 3.23/3.24 with sharp <= 0.34.5.",
+    "verdict": "confirmed",
+    "correction": "The npm registry confirms it: 0.34.2 needs libvips >= 8.16.1, 0.34.3 needs >= 8.17.1, 0.34.5 needs >= 8.17.3, 0.35.0 final needs >= 8.18.3 (only 0.35.0 release candidates accepted 8.18.2) and 0.35.5 needs >= 8.18.7. sources.debian.org shows trixie at 8.16.1-1+deb13u1 and forky/sid at 8.18.7. The install page lists JPEG, PNG, Ultra HDR, WebP, AVIF, TIFF, GIF and SVG input only.",
+    "sources": [
+     "https://registry.npmjs.org/sharp",
+     "https://sharp.pixelplumbing.com/install/",
+     "https://sources.debian.org/api/src/vips/"
+    ]
+   },
+   {
+    "claim": "Debian 13 ships libheif 1.19.8, whose libheif1 hard-depends on libheif-plugin-libde265. It also ships vips 8.16.1, ImageMagick 7.1.1.43 and ffmpeg 7.1.5, built with libx264, libzimg, libplacebo, libdav1d and libvpl.",
+    "verdict": "confirmed",
+    "correction": "The control file shows 'Depends: \u2026 libheif-plugin-libde265 (= ${binary:Version})'. ffmpeg's rules enable libx264, libx265, libzimg, libdav1d and libplacebo. libvpl is enabled only conditionally (an amd64 build condition), so it is not on arm64. trixie-proposed-updates already carries libheif 1.23.4 and vips 8.16.1+deb13u2, so the next point release will change these versions.",
+    "sources": [
+     "https://sources.debian.org/data/main/libh/libheif/1.19.8-1%2Bdeb13u1/debian/control",
+     "https://sources.debian.org/data/main/f/ffmpeg/7:7.1.5-0%2Bdeb13u1/debian/rules",
+     "https://sources.debian.org/api/src/libheif/"
+    ]
+   },
+   {
+    "claim": "Chromium on Raspberry Pi OS does not play HEVC. An engineer said 'We won't be working on chromium HEVC support' (Nov 2025, reaffirmed Sep 2026), and isTypeSupported('hvc1') returns false.",
+    "verdict": "confirmed",
+    "correction": "cillian64 (Raspberry Pi engineer) wrote the quote on 2025-11-06. The 'reaffirmed' part is weaker than stated: on 2026-09-06 jamesh only said the earlier post 'is still valid', without naming Chromium. The isTypeSupported report came from a user, not an engineer. A third-party patched Chromium build with HEVC exists (reported Sep 2026), but it is not the archive package. Serve H.264 to the kiosk.",
+    "sources": [
+     "https://forums.raspberrypi.com/viewtopic.php?t=393549"
+    ]
+   },
+   {
+    "claim": "The Pi 4's H.264 decoder is limited to 1080p, and its HEVC decoder does not support 10-bit (6by9, Nov 2025). No current source confirms that Raspberry Pi's Chromium uses the V4L2 hardware decoders on a Pi 4.",
+    "verdict": "partly",
+    "correction": "The H.264 1080p limit is right: 6by9 wrote 'The H264 decoder is limited to 1080p (always has been)'. The 10-bit part misreads him. He said 10-bit files fail because 'there is no GStreamer mapping from the pixel format', which is a GStreamer gap, not a hardware one, and the Pi 4's HEVC block decodes Main10 in Kodi/LibreELEC. It does not matter for Chromium, which has no HEVC anyway. The 'no source confirms V4L2' part is contradicted by trixie-feedback #101, where Chromium on a Pi 4 hardware-decodes H.264 through V4L2/bcm2835-codec. Consequence: the 4K H.264 .MOV files iOS produces will fall back to software decode on the kiosk, so the server must make \u22641080p 8-bit SDR H.264 renditions.",
+    "sources": [
+     "https://github.com/raspberrypi/linux/issues/7137",
+     "https://github.com/raspberrypi/trixie-feedback/issues/101"
+    ]
+   },
+   {
+    "claim": "Rpt Chromium 151.0.7922.71 rpt1 and 152.0.7977.82 rpt1 could freeze the VideoCore when looping short H.264 clips. The fix shipped in 152.0.7977.82 rpt2 and the issue closed on 2026-09-15. Workarounds were --disable-accelerated-video-decode or gpu_mem=128.",
+    "verdict": "confirmed",
+    "correction": "Confirmed. The fault came from decoder teardown at clip boundaries with buffers still outstanding, and a second autoplay zone made it more likely. Software decode cost about 150\u2013270% CPU. Version 145 rpt1 had worked but was gone from the archive, so pinning an old build is not always possible. The pool currently keeps builds back to 152.",
+    "sources": [
+     "https://github.com/raspberrypi/trixie-feedback/issues/101",
+     "https://archive.raspberrypi.com/debian/pool/main/c/chromium/"
+    ]
+   },
+   {
+    "claim": "PocketBase's latest release is v0.40.5 (2026-10-08), still pre-1.0. v0.40.0 (2026-08-23) has breaking notes and requires Go 1.27, and v0.22.56 shipped the same day. Auth offers password, OTP, OAuth2 and MFA, with no magic link; the OTP template can carry {OTP} and {OTP_ID}. Code defaults: OTP 8 digits/180 s, auth token 5 days, file token 3 min. File fields default to ~5 MB, thumbnails cover jpg/png/gif/partial webp, there is no chunked upload, and realtime SSE disconnects after 5 minutes idle.",
+    "verdict": "confirmed",
+    "correction": "All confirmed in the releases, docs and collection_model_auth_options.go (OTP 180/8, auth 432000, file token 180, OTP max 86400, auth max about 3 years). Two details to add. The files docs describe the protected-file token as 'valid ~2min', while the code default is 180 s. Built-in backups are a ZIP of all of pb_data including local uploads, and the docs recommend sqlite3 .backup plus rsync once pb_data passes about 5 GB.",
+    "sources": [
+     "https://github.com/pocketbase/pocketbase/releases",
+     "https://pocketbase.io/docs/authentication/",
+     "https://github.com/pocketbase/pocketbase/blob/master/core/collection_model_auth_options.go",
+     "https://pocketbase.io/docs/files-handling/",
+     "https://pocketbase.io/docs/api-realtime/",
+     "https://pocketbase.io/docs/going-to-production/"
+    ]
+   },
+   {
+    "claim": "Node 24 moved to Maintenance LTS on 2026-10-20 (EOL 2028-04-30). Node 26 becomes Active LTS on 2026-10-28, and Node 22's EOL is 2027-04-30. node:sqlite is 'Stability 1.2 \u2013 Release candidate' since v24.15.0/v25.7.0. better-sqlite3 13.0.3 needs Node >= 22, and Fastify 5.12.7's LTS table lists Node 20 and 22.",
+    "verdict": "confirmed",
+    "correction": "Confirmed. The nodejs/release README still labels 24.x 'Active LTS' in its status column, but its dates put maintenance at 2026-10-20. Fastify's LTS table does not yet list Node 24 or 26, and Node 20 is already EOL, so the supported runtime for Fastify 5 is formally only Node 22.",
+    "sources": [
+     "https://github.com/nodejs/release",
+     "https://nodejs.org/api/sqlite.html",
+     "https://nodejs.org/docs/latest-v24.x/api/sqlite.html",
+     "https://registry.npmjs.org/better-sqlite3",
+     "https://fastify.dev/docs/latest/Reference/LTS/"
+    ]
+   },
+   {
+    "claim": "Litestream v0.5.17 (2026-08-31) is current. v0.5.0 moved to LTX and cannot restore v0.3 WAL backups. v0.5 allows one replica per database, age encryption was removed, and R2 and B2 settings are auto-detected.",
+    "verdict": "partly",
+    "correction": "The 'cannot restore v0.3 backups' part is wrong for current releases. The migration guide says litestream restore 'restores from v0.3.x format backups without any special flags or configuration', added in v0.5.7. The rest holds: v0.5.17 is the latest, there is exactly one replica per database (more fails at startup), and 'Age encryption is not available in v0.5.0+' with no timeline for its return. That means the SQLite replica sits unencrypted in the bucket unless something else encrypts it. R2 (sign-payload, concurrency 2) and B2 (force-path-style) are auto-detected.",
+    "sources": [
+     "https://litestream.io/docs/migration/",
+     "https://github.com/benbjohnson/litestream/releases",
+     "https://litestream.io/guides/s3-compatible/"
+    ]
+   },
+   {
+    "claim": "Email pricing: Resend Free is 3,000/month capped at 100/day, Pro $20 for 50k. Postmark Free is 100/month, Basic $15 for 10k at $1.80/1k extra. SES is $0.10/1k with a sandbox of 200/24 h and 1/s and a 96 h review. Cloudflare Email Sending (beta since 2026-04-16) needs Workers Paid, includes 3,000/month, then $0.35/1k, with free sends to verified destinations and binding, REST or SMTP.",
+    "verdict": "confirmed",
+    "correction": "All confirmed on the vendor pages. Resend Pro overage is $0.90 per 1k. SES gives an 'initial response within 96 hours'. Cloudflare's service page lists 'Workers binding, REST API, or authenticated SMTP'. Cloudflare Email Sending is still beta. Its free sends to verified destination addresses could cover a small, fixed family list, but each recipient must verify first.",
+    "sources": [
+     "https://resend.com/pricing",
+     "https://postmarkapp.com/pricing",
+     "https://aws.amazon.com/ses/pricing/",
+     "https://docs.aws.amazon.com/ses/latest/dg/request-production-access.html",
+     "https://developers.cloudflare.com/email-service/platform/pricing/",
+     "https://developers.cloudflare.com/email-service/",
+     "https://developers.cloudflare.com/changelog/post/2026-04-16-email-sending-public-beta/"
+    ]
+   },
+   {
+    "claim": "A Home Screen web app has its own cookie and storage jar. Since 17.2 only cookies are copied in at install, and iOS 26 opens every Home Screen site as a web app with no manifest required. WebKit bug 272325 (open, P2) covers random session-cookie resets.",
+    "verdict": "confirmed",
+    "correction": "Confirmed. Safari 17.2: 'the cookies are copied over\u2026 No other kind of local storage is copied over.' Safari 26: 'By default, every website added to the Home Screen opens as a web app', and a manifest is no longer required. Bug 272325 is NEW, P2 with Critical severity, and last commented on 2024-11-21, including a 0.35% stale-cookie rate on iOS 18.1. The claim that no release documents Mail links opening inside the web app is an absence claim; I found nothing contradicting it. Out-of-scope links open in an in-app browser.",
+    "sources": [
+     "https://webkit.org/blog/14787/webkit-features-in-safari-17-2/",
+     "https://webkit.org/blog/17333/webkit-features-in-safari-26-0/",
+     "https://bugs.webkit.org/show_bug.cgi?id=272325"
+    ]
+   },
+   {
+    "claim": "iOS web push needs 16.4+, a Home Screen web app and a permission request from a user gesture, with no Apple Developer account and *.push.apple.com allowed. Safari revokes subscriptions after silent pushes. Declarative Web Push ('web_push': 8030, title plus navigate, optional app_badge, window.pushManager) shipped in 18.4 with no silent-push penalty. iOS lacks pushsubscriptionchange, Background Sync and Background Fetch. Apple returns 403 BadJwtToken for a mailto:\u2026@localhost subject.",
+    "verdict": "confirmed",
+    "correction": "All confirmed in the WebKit posts and MDN browser-compat-data: safari_ios has no pushsubscriptionchange (Chrome has it from 138), SyncManager and BackgroundFetchManager are unsupported in Safari, and Chrome has SyncManager from 49. web-push PR #988, adding the BadJwtToken note, merged on 2026-09-11. The Declarative Web Push post gives macOS 15.5 (Safari 18.5) as the desktop target.",
+    "sources": [
+     "https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/",
+     "https://webkit.org/blog/16535/meet-declarative-web-push/",
+     "https://github.com/mdn/browser-compat-data/blob/main/api/ServiceWorkerGlobalScope.json",
+     "https://github.com/mdn/browser-compat-data/blob/main/api/SyncManager.json",
+     "https://github.com/web-push-libs/web-push/pull/988"
+    ]
+   },
+   {
+    "claim": "The current Raspberry Pi OS images are dated 6 Oct 2026, on trixie with Linux 6.18. Chromium is 1:155.0.8059.79-1~deb13u1+rpt1 with an epoch, so Debian's chromium never replaces it. unattended-upgrades' default origins exclude the 'Raspberry Pi Foundation' archive.",
+    "verdict": "confirmed",
+    "correction": "The downloads page confirms 6 Oct 2026, kernel 6.18, Debian 13. The 6.18.50 point version comes only from Linuxiac. The Packages index confirms the chromium version; chromium-browser is a transitional package that depends on chromium. The Release file shows 'Origin: Raspberry Pi Foundation', and 50unattended-upgrades.Debian matches origin=Debian only. Also note that Debian trixie-security already has chromium 156.0.8078.47, so the Pi's Chromium is a major version behind upstream security and is not auto-updated.",
+    "sources": [
+     "https://www.raspberrypi.com/software/operating-systems/",
+     "https://archive.raspberrypi.com/debian/dists/trixie/main/binary-arm64/Packages.gz",
+     "https://archive.raspberrypi.com/debian/dists/trixie/Release",
+     "https://qa.debian.org/madison.php?package=chromium",
+     "https://github.com/mvo5/unattended-upgrades/blob/master/data/50unattended-upgrades.Debian"
+    ]
+   },
+   {
+    "claim": "Raspberry Pi's Touch Display 2 10\" (announced 22 Jul 2026, $80, 1200\u00d71920) needs 4-lane DSI and does not work with a Pi 4. The Waveshare 10.1\" DSI LCD (C) works through the in-kernel 'vc4-kms-dsi-waveshare-panel,10_1_inch' overlay.",
+    "verdict": "partly",
+    "correction": "The Touch Display 2 part is right: OMG Ubuntu, Pimoroni and Waveshare all say it is not compatible with a Pi 4 or earlier. The announcement date is wrong: OMG Ubuntu dates the launch 23 July 2026. For the Waveshare (C), the overlay exists in the rpi-6.18.y README (with Goodix touch), and the wiki gives the trixie/bookworm line, brightness 0\u2013255 through sysfs and 520 mA with the backlight on. But the wiki only ties the overlay's dual-DSI note to Pi 5/CM boards and describes the Pi 4B only through 15-pin FPC wiring, so verify that combination on a Pi 4 under trixie.",
+    "sources": [
+     "https://www.omgubuntu.co.uk/2026/07/raspberry-pi-10-inch-touch-display",
+     "https://shop.pimoroni.com/products/raspberry-pi-touch-display-2-10",
+     "https://www.waveshare.com/wiki/10.1inch_DSI_LCD_%28C%29",
+     "https://github.com/raspberrypi/linux/blob/rpi-6.18.y/arch/arm/boot/dts/overlays/README"
+    ]
+   },
+   {
+    "claim": "In Chromium, '--kiosk' skips the session-crashed bubble, the bad-flags warning and other startup infobars, and '--disable-infobars' no longer exists. AudioCaptureAllowedUrls grants mic access without a prompt ('*' not supported), AutoplayAllowlist allows autoplay, and both apply on Linux. From Chrome 136, remote debugging needs a non-default --user-data-dir.",
+    "verdict": "confirmed",
+    "correction": "Confirmed. infobar_utils.cc returns early under kiosk ('Do not show any other info bars in Kiosk mode') before both the crash bubble and ShowBadFlagsPrompt. The automation infobar is decided before that check, so it can still appear. chrome_switches.h has kiosk, no-first-run, start-maximized and hide-crash-restore-bubble, but no disable-infobars. The policy YAMLs show chrome.*:29- for AudioCaptureAllowedUrls with the explicit '*' exclusion, and chrome.*:86- for AutoplayAllowlist. Chrome's 2025-03-17 post confirms the Chrome 136 remote-debugging change.",
+    "sources": [
+     "https://chromium.googlesource.com/chromium/src/+/refs/heads/main/chrome/browser/ui/startup/infobar_utils.cc",
+     "https://chromium.googlesource.com/chromium/src/+/refs/heads/main/chrome/common/chrome_switches.h",
+     "https://chromium.googlesource.com/chromium/src/+/refs/heads/main/components/policy/resources/templates/policy_definitions/Miscellaneous/AudioCaptureAllowedUrls.yaml",
+     "https://chromium.googlesource.com/chromium/src/+/refs/heads/main/components/policy/resources/templates/policy_definitions/Miscellaneous/AutoplayAllowlist.yaml",
+     "https://developer.chrome.com/blog/remote-debugging-port"
+    ]
+   },
+   {
+    "claim": "raspi-config's overlay option installs overlayroot and prepends 'overlayroot=tmpfs' to cmdline.txt, so all changes outside /boot are lost at reboot. Making /boot read-only is a separate fstab option, and raspi-config refuses on 256 MB of RAM or less. cage 0.3.x lacks wlr-output-power-management, so wlopm fails, while labwc has it.",
+    "verdict": "confirmed",
+    "correction": "The trixie raspi-config confirms it: 'apt-get install -y overlayroot', 'sed \u2026 s/^/overlayroot=tmpfs /', a MemTotal <= 262144 check, and the read-only /boot handled through fstab. cage.c creates the output manager, screencopy, virtual keyboard, idle-notifier and idle-inhibit protocols but no output-power manager; labwc's server.c creates wlr_output_power_manager_v1. Under cage you can still blank through wlr-randr --off (output management) or the backlight's sysfs bl_power.",
+    "sources": [
+     "https://github.com/RPi-Distro/raspi-config/blob/trixie/raspi-config",
+     "https://github.com/cage-kiosk/cage/blob/master/cage.c",
+     "https://github.com/labwc/labwc/blob/master/src/server.c"
+    ]
+   },
+   {
+    "claim": "Cloudflare Zero Trust (Access) is free for up to 50 users, and pay-as-you-go is $7/user/month.",
+    "verdict": "partly",
+    "correction": "The 50-user free tier holds up: Cloudflare's 2020 post says '50 seats of Access and Gateway', and its pricing page describes the Free plan as for teams under 50 users. The current plans page I could load shows no per-seat price, so $7/user/month comes only from third-party summaries and is unverified. Every person (and the kiosk's identity) who logs in through Access takes a seat.",
+    "sources": [
+     "https://blog.cloudflare.com/teams-plans/",
+     "https://www.cloudflare.com/plans/zero-trust-services/",
+     "https://costbench.com/software/business-vpn/cloudflare-zero-trust/free-plan/"
+    ]
+   }
+  ],
+  "missing_considerations": [
+   "PocketBase has no chunked or resumable upload, so any video over 100 MB cannot reach it through the tunnel in one multipart POST. Large videos need a tus sidecar with chunks under 100 MB, or browser-direct presigned multipart uploads to R2, with PocketBase only recording metadata. PocketBase's built-in backup ZIPs all of pb_data including media, which does not work at family-archive sizes; back up media and the DB separately.",
+   "Video playback makes repeated HTTP Range (206) requests over time. Safari will not play MP4 without Range support. Short-lived URL tokens (PocketBase file tokens of about 2\u20133 min, or short presigned GETs) can expire mid-playback and break seeking or resuming, so media auth needs a cookie or a token whose lifetime outlasts the longest video.",
+   "The iOS picker turns 4K HEVC into 4K H.264 .MOV, which is larger, and the Pi 4's H.264 decoder stops at 1080p. The server must therefore always make a \u22641080p, 8-bit SDR H.264/AAC MP4 with +faststart for the kiosk, and tone-map Dolby Vision/HLG HDR (zscale/libplacebo are in Debian's ffmpeg). Otherwise expect software decode at 150%+ CPU and washed-out colour. Also strip location metadata (-map_metadata -1) and EXIF GPS (sharp's default) on derivatives.",
+   "The two research tracks contradict each other on whether Pi Chromium uses V4L2 hardware decode on a Pi 4. trixie-feedback #101 settles it: it does. That makes Chromium rpt regressions in the V4L2 path a real kiosk risk, so pin a known-good Chromium build and test updates before rolling them out.",
+   "overlayroot=tmpfs wipes the Chromium profile at every reboot: the session cookie, service-worker cache, IndexedDB, the push subscription and storage.persist grants. Keep the profile on a writable partition (overlayroot=tmpfs:recurse=0 with /data), or design kiosk auth as a device credential that re-provisions itself at boot. Grandma cannot click a magic link.",
+   "The Pi has no RTC. If Chromium starts before NTP sync, TLS validation and cookie or token expiry checks can fail. Order the kiosk unit after time-sync.target (systemd-time-wait-sync enabled), and add a network-online wait and retry page.",
+   "Web Push in distro Chromium depends on Google's GCM/FCM and Google API keys. Unbranded Linux Chromium builds often cannot subscribe ('push service error'). Whether Raspberry Pi's Chromium can is unverified, so the kiosk should get live updates over SSE or WebSocket rather than Web Push.",
+   "Email link scanners that execute JavaScript (Defender Safe Links detonation) can auto-submit a landing page that consumes a token on load. iMessage and SMS link previews also fetch URLs. Make the token's consumption require a real user gesture or typed OTP entry. Because Mail opens links in Safari rather than the Home Screen app, a typed code inside the PWA is the reliable path on iOS.",
+   "If Cloudflare Access gates the whole hostname, the iOS standalone app and the kiosk must hold a CF_Authorization cookie too. When it expires, the Access login opens in an in-app browser, and the separate cookie jar can cause loops. Bot Fight Mode or challenges can also break service-worker and manifest fetches. Gating only admin paths with Access, or using the app's own auth, avoids this.",
+   "Uploads from iOS stop when the PWA is backgrounded or the screen locks (no Background Fetch or Background Sync). Large videos need tus resumability, visible progress and a 'keep this open' UX. The iOS 'Preparing\u2026' transcode can also take minutes for long 4K clips before any byte is sent.",
+   "The kiosk's Chromium lags Debian security by a major version (155 vs 156) and is not covered by default unattended-upgrades. Lock it down with URLAllowlist/URLBlocklist, DeveloperToolsAvailability and IncognitoModeAvailability. getUserMedia and Wake Lock need a secure context, so the kiosk should load the https tunnel hostname, not plain LAN http, or the mic silently fails.",
+   "Litestream v0.5 has no encryption and allows a single replica. Family-photo metadata in R2 would sit unencrypted unless encrypted another way, and a second off-site copy needs storage-layer replication.",
+   "The trixie point release will bring libheif 1.23.4 and vips 8.16.1+deb13u2 (already in proposed-updates), and sharp's libvips floor rises with nearly every release. Pin the sharp version, or decode HEIC through libheif or the vips CLI outside sharp."
+  ]
+ }
+}

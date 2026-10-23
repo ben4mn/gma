@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en" data-state="default">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1280, height=800, initial-scale=1">
+<title>Home · Grandma's frame · Lantern</title>
+<script>
+  // States: ?state=offline | ?state=night (default otherwise)
+  (function () {
+    var s = new URLSearchParams(location.search).get('state');
+    document.documentElement.dataset.state = (s === 'offline' || s === 'night') ? s : 'default';
+  })();
+</script>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="grandma.css">
+<style>
+  /* ---------- The slideshow (one slide is showing; it changes slowly) ---------- */
+  .slide { position: absolute; inset: 0; display: none; overflow: hidden; }
+  [data-state="default"] .slide--portrait,
+  [data-state="offline"] .slide--landscape,
+  [data-state="night"]   .slide--night { display: block; }
+
+  /* a portrait from a phone: the whole print, never cropped, on a blurred fill of itself */
+  .slide--portrait .print { top: 24px; height: 596px; width: auto; left: 452px; transform: translateX(-50%); }
+  /* a landscape: full bleed, focal point kept clear of the dock and the rail */
+  .full { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .slide--landscape .full { object-position: 50% 30%; }
+  /* shade behind the rail so the new cards have a quiet wall to glow against */
+  .rail-shade {
+    position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(270deg, rgba(16, 18, 21, .72) 0, rgba(16, 18, 21, .38) 300px, rgba(16, 18, 21, 0) 520px);
+  }
+  .open-slide { position: absolute; left: 0; top: 0; width: 880px; height: 640px; z-index: 2; }
+
+  /* ---------- The rail: clock + what's new ---------- */
+  .rail {
+    position: absolute; top: 24px; right: 24px; width: 360px; height: 596px; z-index: 10;
+    display: flex; flex-direction: column; gap: 16px;
+  }
+  .clock { padding: 18px 26px 20px; border-radius: 28px; }
+  .clock-time { font-size: var(--g-display); font-weight: 500; line-height: 1.05; letter-spacing: -.01em; }
+  .clock-time span { font-size: 34px; font-weight: 400; margin-left: 6px; color: var(--muted); letter-spacing: 0; }
+  .clock-date { margin-top: 6px; font-size: var(--g-meta); font-weight: 500; color: var(--muted); }
+
+  .new-list { flex: 1; display: flex; flex-direction: column; gap: 16px; }
+  .new {
+    flex: 1; display: flex; align-items: center; gap: 18px; padding: 8px 18px 8px 8px;
+    background: var(--surface); border-radius: 26px;
+    border: 2px solid var(--glow-honey-edge);
+    box-shadow: 0 0 30px 2px var(--glow-honey), 0 14px 40px rgba(0, 0, 0, .45);
+    transition: transform .18s var(--ease);
+  }
+  .new:active { transform: scale(.98); }
+  .thumb { position: relative; width: 120px; height: 120px; flex: none; border-radius: 18px; overflow: hidden; background: var(--raised); }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .thumb-play {
+    position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; margin: -28px 0 0 -28px;
+    border-radius: 50%; background: var(--honey); color: var(--honey-ink);
+    display: grid; place-items: center; box-shadow: 0 4px 14px rgba(0, 0, 0, .4);
+  }
+  .thumb-play .icon { font-size: 30px; margin-left: 3px; }
+  /* three photos: a small fanned stack */
+  .thumb--stack { overflow: visible; background: none; }
+  .thumb--stack img {
+    position: absolute; width: 92px; height: 92px; border-radius: 14px; object-fit: cover;
+    border: 3px solid var(--surface); box-shadow: 0 6px 14px rgba(0, 0, 0, .45);
+  }
+  .thumb--stack img:nth-child(1) { left: 2px;  top: 6px;  transform: rotate(-9deg); }
+  .thumb--stack img:nth-child(2) { left: 26px; top: 2px;  transform: rotate(5deg); }
+  .thumb--stack img:nth-child(3) { left: 14px; top: 24px; transform: rotate(-1deg); }
+  .new-words { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .new-words { gap: 2px; }
+  .new-tag { font-size: var(--g-small); font-weight: 600; color: var(--honey); line-height: 1.2; margin-bottom: 2px; }
+  .new-kind { font-size: var(--g-meta); font-weight: 500; color: var(--muted); line-height: 1.2; }
+  .new-name { font-size: 34px; font-weight: 700; line-height: 1.12; letter-spacing: -.005em; }
+
+  /* ---------- The dock ---------- */
+  .dock { right: 12px; padding-left: 160px; padding-right: 12px; }
+  .now {
+    flex: 1; min-width: 0; height: 120px; padding: 0 20px;
+    display: flex; flex-direction: column; justify-content: center; gap: 4px;
+    border-left: 2px solid var(--line);
+  }
+  .now-who { font-size: var(--g-small); font-weight: 600; color: var(--muted); }
+  .now-words { font-family: var(--font-words); font-size: var(--g-body); line-height: 1.3; font-weight: 400; }
+  .voice {
+    width: 452px; height: 120px; flex: none; display: flex; align-items: stretch; overflow: hidden;
+    border-radius: var(--r-lg); background: var(--raised); text-align: left;
+    box-shadow: inset 0 1px 0 rgba(244, 239, 230, .06), 0 6px 18px rgba(0, 0, 0, .25);
+    transition: transform .18s var(--ease);
+  }
+  .voice:active { transform: scale(.98); }
+  .voice-photo { position: relative; width: 176px; flex: none; }
+  .voice-photo img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 60%; }
+  .voice-mic {
+    position: absolute; right: -30px; top: 50%; width: 72px; height: 72px; margin-top: -36px;
+    border-radius: 50%; background: var(--honey); color: var(--honey-ink);
+    display: grid; place-items: center; box-shadow: 0 0 0 6px var(--raised), 0 6px 18px rgba(0, 0, 0, .3);
+  }
+  .voice-mic .icon { font-size: 38px; stroke-width: 2.6; }
+  .voice-words { padding: 0 22px 0 52px; display: flex; align-items: center; font-size: var(--g-label); font-weight: 600; line-height: 1.2; }
+
+  /* ---------- Offline: one calm line ---------- */
+  .offline-note {
+    position: absolute; left: 24px; top: 24px; z-index: 10; display: none;
+    align-items: center; gap: 14px; padding: 16px 26px 16px 20px; border-radius: var(--r-pill);
+    font-size: var(--g-meta); font-weight: 500; color: var(--text);
+  }
+  .offline-note .icon { font-size: 34px; color: var(--muted); }
+  .offline-note .icon .faint { opacity: .38; }
+  [data-state="offline"] .offline-note { display: flex; }
+
+  /* ---------- Night: dimmer still, amber, paused behind a calm clock ---------- */
+  .night-only { display: none; }
+  [data-state="night"] .night-only { display: block; }
+  [data-state="night"] .btn.night-only { display: inline-flex; }
+  [data-state="night"] .day-only { display: none; }
+  [data-state="night"] body { background: var(--n-bg); }
+  .slide--night .full {
+    object-position: 50% 0%;
+    filter: brightness(.36) saturate(.55) sepia(.5);
+  }
+  .night-tint {
+    position: absolute; inset: 0; pointer-events: none;
+    background:
+      radial-gradient(52% 62% at 26% 40%, rgba(11, 9, 7, .74) 0, rgba(11, 9, 7, .44) 75%, rgba(11, 9, 7, .62) 100%),
+      linear-gradient(rgba(70, 40, 8, .18), rgba(70, 40, 8, .18));
+  }
+  .night-clock {
+    position: absolute; left: 72px; top: 84px; text-align: left; z-index: 5;
+    color: var(--n-text); text-shadow: 0 2px 30px rgba(0, 0, 0, .6);
+  }
+  .night-time { font-size: var(--g-clock-night); font-weight: 300; line-height: 1; letter-spacing: -.02em; }
+  .night-time span { font-size: 60px; font-weight: 400; letter-spacing: 0; margin-left: 10px; color: var(--n-muted); }
+  .night-date { margin-top: 18px; font-size: 36px; font-weight: 500; }
+  .night-line { margin-top: 22px; line-height: 1.4; font-family: var(--font-words); font-style: italic; font-size: var(--g-body); color: var(--n-muted); }
+  [data-state="night"] .dock { right: auto; background: var(--n-plate); }
+  [data-state="night"] .home[aria-current="page"] {
+    background: var(--n-raised); color: var(--n-text);
+    box-shadow: inset 0 0 0 3px var(--n-honey);
+  }
+  [data-state="night"] .home[aria-current="page"] .icon { color: var(--n-text); }
+  .btn--night { background: var(--n-raised); color: var(--n-text); padding: 0 34px; }
+  .btn--night .icon { color: var(--n-muted); }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M3.5 11.2 12 3.8l8.5 7.4"/><path d="M6 9.6v10.1h12V9.6"/><path d="M10 19.7v-5.2h4v5.2"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.2v13.6L19 12z" fill="currentColor"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="2.8" width="6" height="11.4" rx="3"/><path d="M5.4 11a6.6 6.6 0 0 0 13.2 0"/><path d="M12 17.6v3.4"/></symbol>
+  <symbol id="i-wifi" viewBox="0 0 24 24"><path class="faint" d="M2.4 8.8a14 14 0 0 1 19.2 0"/><path class="faint" d="M5.4 12.3a9.6 9.6 0 0 1 13.2 0"/><path d="M8.6 15.8a5 5 0 0 1 6.8 0"/><circle cx="12" cy="19.2" r="1.3" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-photos" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="2.6"/><circle cx="8.6" cy="9.6" r="1.7"/><path d="M21 15.6l-5.2-5.2L7 19.4"/></symbol>
+</svg>
+
+<!-- The slideshow -->
+<div class="slide slide--portrait">
+  <img class="fill" src="../assets/photos/p1003.jpg" alt="" aria-hidden="true">
+  <img class="print" src="../assets/photos/p1003.jpg" alt="A young deer standing in Aunt Carol's garden">
+</div>
+<div class="slide slide--landscape">
+  <img class="full" src="../assets/photos/p1062.jpg" alt="Pickles the pug wrapped in a blanket in bed">
+</div>
+<div class="slide slide--night">
+  <img class="full" src="../assets/photos/p129.jpg" alt="Two people on a bench by the water at sunset">
+</div>
+<div class="vignette day-only"></div>
+<div class="rail-shade day-only"></div>
+<div class="night-tint night-only"></div>
+<a class="open-slide tap day-only" href="photo.html" aria-label="Open this photo" data-tap></a>
+
+<!-- Offline: one calm line -->
+<div class="offline-note plate" role="status">
+  <svg class="icon" aria-hidden="true"><use href="#i-wifi"/></svg>
+  No Wi-Fi right now. Showing your saved photos.
+</div>
+
+<!-- Night: the slideshow rests behind a calm clock -->
+<div class="night-clock night-only" aria-live="polite">
+  <div class="night-time">10:42<span>pm</span></div>
+  <div class="night-date">Tuesday, October 21</div>
+  <p class="night-line">Good night.<br>The photos will be back in the morning.</p>
+</div>
+
+<!-- The rail: the time, and what is new -->
+<aside class="rail day-only" aria-label="Today and new from the family">
+  <div class="clock plate">
+    <div class="clock-time">10:42<span>am</span></div>
+    <div class="clock-date">Tuesday, October 21</div>
+  </div>
+  <div class="new-list">
+    <a class="new" href="photo.html?state=video">
+      <span class="thumb">
+        <img src="../assets/photos/p646.jpg" alt="">
+        <span class="thumb-play"><svg class="icon" aria-hidden="true"><use href="#i-play"/></svg></span>
+      </span>
+      <span class="new-words"><span class="new-tag">New</span><span class="new-kind">Video from</span><span class="new-name">Sarah</span></span>
+    </a>
+    <a class="new" href="photo.html">
+      <span class="thumb thumb--stack">
+        <img src="../assets/photos/p129.jpg" alt="">
+        <img src="../assets/photos/p174.jpg" alt="">
+        <img src="../assets/photos/p1015.jpg" alt="">
+      </span>
+      <span class="new-words"><span class="new-tag">New</span><span class="new-kind">3 photos from</span><span class="new-name">Mike</span></span>
+    </a>
+    <a class="new" href="photo.html">
+      <span class="thumb"><img src="../assets/photos/p837.jpg" alt="" style="object-position:40% 50%"></span>
+      <span class="new-words"><span class="new-tag">New</span><span class="new-kind">Photo from</span><span class="new-name">Lily</span></span>
+    </a>
+  </div>
+</aside>
+
+<!-- Home: always here, always in this place -->
+<a class="btn home" data-home href="home.html" aria-current="page">
+  <svg class="icon" aria-hidden="true"><use href="#i-home"/></svg>
+  <span class="home-word">Home</span>
+</a>
+
+<!-- The dock -->
+<nav class="dock plate" aria-label="Frame">
+  <a class="now day-only" href="photo.html">
+    <span class="now-who" data-default>From Aunt Carol · Sunday</span>
+    <span class="now-words" data-default>A little visitor in my garden.</span>
+  </a>
+  <button class="voice day-only" type="button">
+    <span class="voice-photo">
+      <img src="../assets/photos/p129.jpg" alt="">
+      <span class="voice-mic"><svg class="icon" aria-hidden="true"><use href="#i-mic"/></svg></span>
+    </span>
+    <span class="voice-words">Message to the whole family</span>
+  </button>
+  <button class="btn btn--night night-only" type="button">
+    <svg class="icon" aria-hidden="true"><use href="#i-photos"/></svg>
+    See the photos now
+  </button>
+</nav>
+
+<script>
+  // Offline shows a saved photo from Jake; the caption in the dock follows the slide.
+  if (document.documentElement.dataset.state === 'offline') {
+    document.querySelector('.now-who').textContent = 'From Jake · Sunday';
+    document.querySelector('.now-words').textContent = 'Pickles had a lazy Sunday.';
+  }
+</script>
+</body>
+</html>
