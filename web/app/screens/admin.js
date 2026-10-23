@@ -3,7 +3,7 @@
 import { h, mount, confirmButton } from '../../shared/dom.js';
 import { icon } from '../../shared/icons.js';
 import { api } from '../../shared/api.js';
-import { agoLabel, whenLabel } from '../../shared/time.js';
+import { agoLabel, untilLabel, whenLabel } from '../../shared/time.js';
 import { renditionUrl, ownerOf } from '../data.js';
 import { healthLines } from '../admin-health.js';
 import { MAX_SHORT_NAME, shortNameFor } from '../../shared/names.js';
@@ -165,7 +165,7 @@ function people(slot) {
     mount(lists,
       invites.length ? [h('h2', { class: 'section-title' }, 'Waiting to join'), h('div', { class: 'card' }, invites.map((inv) => row(
         inv.name || inv.email,
-        [inv.email || 'No email', inv.used_at ? 'opened it, hasn’t finished signing in' : `expires ${whenLabel(inv.expires_at)}`].join(' · '),
+        [inv.email || 'No email', inv.used_at ? 'opened it, hasn’t finished signing in' : `expires ${untilLabel(inv.expires_at)}`].join(' · '),
         cancelInviteButton(inv, reload))))] : null,
       h('h2', { class: 'section-title' }, `Family (${users.filter((u) => u.status !== 'removed').length})`),
       h('div', { class: 'card' }, users.map((u) => h('div', { class: 'person' },

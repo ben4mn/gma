@@ -121,15 +121,29 @@ export function cardTitle(card) {
   return `${count(photos, 'A photo', 'photos')} and ${count(videos, 'a video', 'videos')}${from}`;
 }
 
+/** The card's headline: who sent it ("From Sarah"), so the name is never what a long title cuts off. */
+export function cardFrom(card) {
+  return `From ${card.senderName}`;
+}
+
+/** What came: "Photo", "Video", "3 photos", "2 photos and a video". */
+export function cardKind(card) {
+  const photos = card.items.filter((i) => i.kind === 'photo').length;
+  const videos = card.items.length - photos;
+  if (videos === 0) return photos === 1 ? 'Photo' : `${photos} photos`;
+  if (photos === 0) return videos === 1 ? 'Video' : `${videos} videos`;
+  return `${count(photos, 'A photo', 'photos')} and ${count(videos, 'a video', 'videos')}`;
+}
+
 export const QUOTE_MAX = 40; // longer captions wait for the photo screen rather than being cut off
 
-/** The card's second line: a single photo's short caption, else when it came. */
+/** The card's second line: a single photo's short caption, else what came and when. */
 export function cardDetail(card, whenText) {
   const [only] = card.items;
   if (card.items.length === 1 && only.kind === 'photo' && only.caption && only.caption.length <= QUOTE_MAX) {
     return { kind: 'quote', text: `“${card.items[0].caption}”` };
   }
-  return { kind: 'when', text: whenText };
+  return { kind: 'when', text: `${cardKind(card)} · ${whenText}` };
 }
 
 /** What Grandma reads after she sends something. Uses the name, never a guessed "she". */

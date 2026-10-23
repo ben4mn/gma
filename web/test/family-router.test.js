@@ -54,3 +54,10 @@ test('the sign-in screen checks ?next= with safeNext against its own origin', as
   assert.match(source, /safeNext\(ctx\.url\.searchParams\.get\('next'\), location\.origin\)/);
   assert.doesNotMatch(source, /function safeNext/, 'one check, the one in router.js');
 });
+
+test('the join and confirm pages never ask who is signed in (no 401 on a public page)', async () => {
+  const { needsSession } = await import('../app/router.js');
+  assert.equal(needsSession('/join/abc123'), false);
+  assert.equal(needsSession('/confirm'), false);
+  for (const p of ['/', '/mine', '/from-grandma', '/you', '/admin', '/signin', '/upload']) assert.equal(needsSession(p), true, p);
+});

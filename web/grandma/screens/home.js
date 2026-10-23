@@ -4,7 +4,7 @@
 // whole family" below it.
 import { h, photo, icon } from '../lib/dom.js';
 import { heroLayout, HERO, HERO_AREA } from '../lib/layout.js';
-import { cardTitle, cardDetail } from '../lib/cards.js';
+import { cardTitle, cardDetail, cardFrom } from '../lib/cards.js';
 
 export const SLIDE_MS = 40_000;
 const FADE_MS = 1600;
@@ -52,12 +52,12 @@ function cardArt(card) {
 function newCard(card, ctx) {
   const detail = cardDetail(card, ctx.when(card.newestAt));
   return h('button', {
-    class: 'pcard', type: 'button',
+    class: 'pcard', type: 'button', 'aria-label': cardTitle(card),
     onClick: () => ctx.go('item', { items: card.items, index: 0 }),
   },
   cardArt(card),
   h('span', { class: 'pcard-text' },
-    h('span', { class: 'pcard-title' }, cardTitle(card)),
+    h('span', { class: 'pcard-title' }, cardFrom(card)),
     h('span', { class: detail.kind === 'quote' ? 'pcard-quote' : 'pcard-meta' }, detail.text)));
 }
 

@@ -1,7 +1,7 @@
 // Boot: service worker, who's signed in, live events, then the router.
 import { h, mount } from '../shared/dom.js';
 import { connectEvents } from '../shared/sse.js';
-import { matchRoute, navigate, startRouter } from './router.js';
+import { matchRoute, navigate, startRouter, needsSession } from './router.js';
 import { session, loadMe } from './session.js';
 import { resyncPush } from './push.js';
 import { renderChrome } from './screens/shell.js';
@@ -107,7 +107,7 @@ async function boot() {
 
   const main = document.getElementById('main');
   try {
-    await loadMe();
+    if (needsSession(location.pathname)) await loadMe();
   } catch (err) {
     mount(main,
       h('div', { class: 'note note--error' },

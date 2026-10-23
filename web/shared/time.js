@@ -37,6 +37,17 @@ export function dayLabel(ms, now = Date.now(), timeZone) {
   return sameYear ? `${p.month} ${p.day}` : `${p.month} ${p.day}, ${p.year}`;
 }
 
+/** "today", "tomorrow", a weekday within the week, else the date: for things still to come (an invite's expiry). */
+export function untilLabel(ms, now = Date.now(), timeZone) {
+  const ahead = daysBetween(dayKey(now, timeZone), dayKey(ms, timeZone));
+  if (ahead <= 0) return 'today';
+  if (ahead === 1) return 'tomorrow';
+  if (ahead < 7) return partsOf(ms, { weekday: 'long' }, timeZone).weekday;
+  const sameYear = dayKey(ms, timeZone).slice(0, 4) === dayKey(now, timeZone).slice(0, 4);
+  const p = partsOf(ms, { month: 'long', day: 'numeric', year: 'numeric' }, timeZone);
+  return sameYear ? `${p.month} ${p.day}` : `${p.month} ${p.day}, ${p.year}`;
+}
+
 /** For a post's byline: the time if it was today, else the day. */
 export function whenLabel(ms, now = Date.now(), timeZone) {
   return dayKey(ms, timeZone) === dayKey(now, timeZone) ? formatTime(ms, timeZone) : dayLabel(ms, now, timeZone);

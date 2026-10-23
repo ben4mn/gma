@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  normalizeItem, groupIntoCards, cardTitle, cardDetail, slideshowItems, sentLine, familyPhotoUrl, shortName,
+  normalizeItem, groupIntoCards, cardTitle, cardFrom, cardKind, cardDetail, slideshowItems, sentLine, familyPhotoUrl, shortName,
 } from '../grandma/lib/cards.js';
 
 const item = (id, extra = {}) => ({
@@ -81,12 +81,12 @@ test('titles for mixed batches', () => {
   assert.equal(cardTitle(mk(['photo', 'video', 'video'])), 'A photo and 2 videos from Mike');
 });
 
-test('the second line quotes a single caption, else says when', () => {
+test('the second line quotes a single caption, else says what came and when', () => {
   const one = { items: [{ kind: 'photo', caption: 'Meet Biscuit!' }] };
   assert.deepEqual(cardDetail(one, 'Yesterday'), { kind: 'quote', text: '“Meet Biscuit!”' });
-  assert.deepEqual(cardDetail({ items: [{ kind: 'photo', caption: 'a' }, { kind: 'photo', caption: 'b' }] }, 'Yesterday'), { kind: 'when', text: 'Yesterday' });
-  assert.deepEqual(cardDetail({ items: [{ kind: 'video', caption: 'Lily at the farm' }] }, 'This morning'), { kind: 'when', text: 'This morning' });
-  assert.deepEqual(cardDetail({ items: [{ kind: 'photo', caption: 'x'.repeat(41) }] }, 'Sunday'), { kind: 'when', text: 'Sunday' });
+  assert.deepEqual(cardDetail({ items: [{ kind: 'photo', caption: 'a' }, { kind: 'photo', caption: 'b' }] }, 'Yesterday'), { kind: 'when', text: '2 photos · Yesterday' });
+  assert.deepEqual(cardDetail({ items: [{ kind: 'video', caption: 'Lily at the farm' }] }, 'This morning'), { kind: 'when', text: 'Video · This morning' });
+  assert.deepEqual(cardDetail({ items: [{ kind: 'photo', caption: 'x'.repeat(41) }] }, 'Sunday'), { kind: 'when', text: 'Photo · Sunday' });
 });
 
 test('the slideshow shows photos and video posters newest first', () => {
@@ -108,4 +108,15 @@ test('familyPhotoUrl accepts a URL, an item or nothing', () => {
   assert.equal(familyPhotoUrl({ url: '/g.jpg' }), '/g.jpg');
   assert.equal(familyPhotoUrl(null, [{ display: '/first.jpg' }]), '/first.jpg');
   assert.equal(familyPhotoUrl(null, [{ kind: 'video', display: '/poster.jpg' }, { kind: 'photo', display: '/p.jpg' }]), '/p.jpg');
+});
+
+test('a card leads with who sent it, so the name is never the part that gets cut off', () => {
+  const mk = (kinds, name = 'Sarah') => ({ senderName: name, items: kinds.map((kind) => ({ kind })) });
+  assert.equal(cardFrom(mk(['photo', 'photo', 'video'])), 'From Sarah');
+  assert.equal(cardFrom(mk(['video'], 'Great Aunt Mary')), 'From Great Aunt Mary');
+  assert.equal(cardKind(mk(['photo', 'photo', 'video'])), '2 photos and a video');
+  assert.equal(cardKind(mk(['video'])), 'Video');
+  assert.equal(cardKind(mk(['photo'])), 'Photo');
+  assert.equal(cardKind(mk(['photo', 'photo', 'photo'])), '3 photos');
+  assert.deepEqual(cardDetail(mk(['photo', 'photo', 'video']), 'This morning'), { kind: 'when', text: '2 photos and a video · This morning' });
 });

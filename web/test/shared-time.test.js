@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatTime, dayLabel, whenLabel, formatDuration, dayKey, agoLabel } from '../shared/time.js';
+import { formatTime, dayLabel, whenLabel, untilLabel, formatDuration, dayKey, agoLabel } from '../shared/time.js';
 
 const TZ = 'America/Chicago';
 // 2026-10-22 10:42 in Chicago (UTC-5 in October)
@@ -44,4 +44,12 @@ test('agoLabel', () => {
   assert.equal(agoLabel(NOW - 60_000, NOW, TZ), '1 minute ago');
   assert.equal(agoLabel(NOW - 3 * 3_600_000, NOW, TZ), '3 hours ago');
   assert.equal(agoLabel(at('2026-10-20T14:00:00Z'), NOW, TZ), 'Tuesday at 9:00 am');
+});
+
+test('untilLabel names a future day (an invite that expires in 14 days is not "Today")', () => {
+  assert.equal(untilLabel(at('2026-10-22T23:00:00Z'), NOW, TZ), 'today');
+  assert.equal(untilLabel(at('2026-10-23T18:00:00Z'), NOW, TZ), 'tomorrow');
+  assert.equal(untilLabel(at('2026-10-26T18:00:00Z'), NOW, TZ), 'Monday');
+  assert.equal(untilLabel(NOW + 14 * 86_400_000, NOW, TZ), 'November 5');
+  assert.equal(untilLabel(at('2027-01-04T18:00:00Z'), NOW, TZ), 'January 4, 2027');
 });

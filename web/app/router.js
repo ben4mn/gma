@@ -48,6 +48,12 @@ export function matchRoute(pathname) {
  * anything that would leave it (//evil.example, /\evil.example, https:…).
  * The server checks the same way when it writes the parameter.
  */
+/** The join and confirm pages never need to know who is signed in (asking would log a 401). */
+export function needsSession(pathname) {
+  const path = normalizePath(pathname);
+  return !(path === '/confirm' || path.startsWith('/join/'));
+}
+
 export function safeNext(next, origin) {
   if (typeof next !== 'string' || next === '') return '/';
   try {
