@@ -321,7 +321,7 @@ async function startServiceWorker() {
   if (!('serviceWorker' in navigator)) return;
   try {
     const hadController = navigator.serviceWorker.controller?.scriptURL === SW_URL.href;
-    const reg = await navigator.serviceWorker.register(SW_URL, { scope: SW_SCOPE, type: 'module' });
+    const reg = await navigator.serviceWorker.register(SW_URL, { scope: SW_SCOPE, type: 'module', updateViaCache: 'none' });
     // a new version took over: reload when Grandma is on Home and not touching it
     navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) reloadPending = true; });
     setInterval(() => reg.update().catch(() => {}), 60 * 60_000);

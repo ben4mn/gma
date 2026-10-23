@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { matchRoute, normalizePath, isAppLink } from '../app/router.js';
+import { matchRoute, normalizePath, isAppLink, safeNext } from '../app/router.js';
 
 test('every family page in the contract has a route', () => {
   for (const [path, name] of [
@@ -35,4 +35,22 @@ test('isAppLink keeps media, the API and the frame out of the router', () => {
   assert.equal(isAppLink(new URL('/api/me', o), o), false);
   assert.equal(isAppLink(new URL('/grandma/', o), o), false);
   assert.equal(isAppLink(new URL('/mine', 'https://example.com'), o), false);
+});
+
+test('safeNext: after signing in, only a path on this site; anything else goes home', () => {
+  const origin = 'https://gma.4mn.org';
+  assert.equal(safeNext('/mine', origin), '/mine');
+  assert.equal(safeNext('/admin/people?x=1#top', origin), '/admin/people?x=1#top');
+  assert.equal(safeNext(`${origin}/you`, origin), '/you');
+  for (const bad of ['/x/..//evil.example', '/%2e%2e//evil.example', '/.//evil.example', '/x/../\\evil.example', '//evil.example', '/\\evil.example', '/\\/evil.example', '\\\\evil.example', 'https://evil.example/mine',
+    'javascript:alert(1)', 'http://gma.4mn.org/mine', '', null, undefined]) {
+    assert.equal(safeNext(bad, origin), '/', String(bad));
+  }
+});
+
+test('the sign-in screen checks ?next= with safeNext against its own origin', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('../app/screens/auth.js', import.meta.url), 'utf8');
+  assert.match(source, /safeNext\(ctx\.url\.searchParams\.get\('next'\), location\.origin\)/);
+  assert.doesNotMatch(source, /function safeNext/, 'one check, the one in router.js');
 });

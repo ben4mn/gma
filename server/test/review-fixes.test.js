@@ -94,8 +94,12 @@ describe('sign-in code lockout (SEC-7)', () => {
     const ctx = await makeTestApp();
     t.after(ctx.cleanup);
     const user = makeUser(ctx.db);
-    const request = () =>
-      ctx.app.inject({ method: 'POST', url: '/api/auth/code/request', headers: sameOrigin(''), payload: { email: user.email }, remoteAddress: '10.9.0.1' });
+    // A code request answers first and makes and sends the code just after.
+    const request = async () => {
+      const res = await ctx.app.inject({ method: 'POST', url: '/api/auth/code/request', headers: sameOrigin(''), payload: { email: user.email }, remoteAddress: '10.9.0.1' });
+      await new Promise((resolve) => setImmediate(resolve));
+      return res;
+    };
     assert.equal((await request()).statusCode, 200);
     const code = /sign-in code is (\d{6})/.exec(ctx.mail.at(-1).text)[1];
 

@@ -61,17 +61,24 @@ const VOICE_TYPES = new Map([
   ['audio/x-wav', 'wav'],
 ]);
 
+// What the kiosk shows (1280x800) when its pairing link is unknown or revoked:
+// Heirloom paper and ink, two large calm lines and nothing to tap, so Grandma
+// can't get stuck anywhere. Styled from a file (the CSP allows no inline
+// style), served from /grandma/ without a session like the frame's other files.
+export const NOT_SET_UP_STYLESHEET = '/grandma/not-set-up.css';
 const NOT_SET_UP_PAGE = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>Grandma's frame</title>
+<meta name="theme-color" content="#F5EEE2">
+<title>Grandma's photos</title>
+<link rel="stylesheet" href="${NOT_SET_UP_STYLESHEET}">
 </head>
-<body>
-<main>
-<h1>This frame isn't set up yet.</h1>
+<body class="not-set-up">
+<main class="not-set-up-card">
+<h1>This frame isn’t set up yet.</h1>
 <p>Ben can fix this.</p>
 </main>
 </body>
@@ -324,7 +331,11 @@ export default async function frameRoutes(app, { config, db, pushSender = undefi
         : null;
     if (!device) {
       request.log.warn('Frame pairing refused: unknown or revoked device token');
-      return reply.code(403).type('text/html; charset=utf-8').send(NOT_SET_UP_PAGE);
+      return reply
+        .code(403)
+        .header('cache-control', 'no-store, no-transform')
+        .type('text/html; charset=utf-8')
+        .send(NOT_SET_UP_PAGE);
     }
 
     // The kiosk opens this link at every boot; keep its session instead of

@@ -11,7 +11,7 @@ import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import rateLimit from '@fastify/rate-limit';
 import { openDb } from './db/index.js';
-import { compileTrust, rateLimitKey, resolveClientIp } from './lib/client-ip.js';
+import { compileTrust, forwardedProto, rateLimitKey, resolveClientIp } from './lib/client-ip.js';
 import { createEventHub } from './lib/events.js';
 import { httpError } from './lib/guards.js';
 import { redactUrl } from './lib/redact.js';
@@ -49,6 +49,16 @@ const STATUS_DEFAULTS = {
   429: ['rate_limited', 'Too many tries. Please wait a few minutes and try again.'],
 };
 const SERVER_ERROR = ['server_error', 'Something went wrong on our side. Please try again in a moment.'];
+
+// The hourly limits (code requests, invite accepts, uploads per hour) say an
+// hour; the short ones (15 minutes or less) keep "a few minutes". Worded from
+// the time the limiter has left, so the last minutes of an hour say a few minutes.
+const RATE_LIMITED_HOURLY = 'Too many tries. Please wait an hour and try again.';
+const FEW_MINUTES_MS = 15 * 60 * 1000;
+
+export function rateLimitedMessage(ttlMs) {
+  return Number(ttlMs) > FEW_MINUTES_MS ? RATE_LIMITED_HOURLY : STATUS_DEFAULTS[429][1];
+}
 
 function securityHeaders(config) {
   const headers = {
@@ -139,12 +149,27 @@ export async function buildApp(
   await app.register(rateLimit, {
     global: false, // routes opt in with { config: { rateLimit: { max, timeWindow } } }
     keyGenerator: rateLimitKey, // per client (an IPv6 client's /64), never per proxy
-    errorResponseBuilder: () => httpError(429, ...STATUS_DEFAULTS[429]),
+    errorResponseBuilder: (request, context) =>
+      httpError(429, STATUS_DEFAULTS[429][0], rateLimitedMessage(context?.ttl)),
   });
 
   const headers = securityHeaders(config);
+  // Cloudflare forwards plain-http visits through the tunnel as well
+  // (X-Forwarded-Proto: http). They go to the https address: GET and HEAD by a
+  // 301 to the same path and query, anything else is refused, so nothing is
+  // ever sent over plain http. Only a trusted proxy's word counts, so local
+  // requests and the box's debug port (127.0.0.1:3064) are never redirected.
+  const httpsOrigin = config.publicOrigin.startsWith('https:') ? config.publicOrigin : null;
   app.addHook('onRequest', async (request, reply) => {
     reply.headers(headers);
+    if (httpsOrigin && forwardedProto(request, trust) === 'http') {
+      if (request.method !== 'GET' && request.method !== 'HEAD') {
+        throw httpError(400, 'https_required', `Please use the secure address, ${httpsOrigin}, and try again.`);
+      }
+      // request.url is the path and query; anything else (an absolute-form target) goes home.
+      const target = request.url.startsWith('/') ? request.url : '/';
+      return reply.redirect(`${httpsOrigin}${target}`, 301);
+    }
     if (!STATE_CHANGING.has(request.method)) return;
     const origin = request.headers.origin;
     if (origin === config.publicOrigin) return;

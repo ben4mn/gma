@@ -67,6 +67,9 @@ function makeInvite(db, { name = 'Aunt May', email = 'may@example.com', sent = t
   return { ...row, token };
 }
 
+// One turn of the event loop: work queued with setImmediate has run.
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+
 let ipCounter = 0;
 const freshIp = () => `10.0.${Math.floor(++ipCounter / 250)}.${ipCounter % 250}`;
 
@@ -85,9 +88,10 @@ describe('sign-in', () => {
   afterEach(() => setClock());
 
   async function post(jar, url, payload, { ip = '127.0.0.1' } = {}) {
-    return jar.take(
-      await t.app.inject({ method: 'POST', url, headers: sameOrigin(jar.header()), payload, remoteAddress: ip }),
-    );
+    const res = await t.app.inject({ method: 'POST', url, headers: sameOrigin(jar.header()), payload, remoteAddress: ip });
+    // A code request answers first and makes and sends the code just after.
+    if (url === '/api/auth/code/request') await settle();
+    return jar.take(res);
   }
 
   const mailTo = (email) => t.mail.filter((m) => m.to === email);

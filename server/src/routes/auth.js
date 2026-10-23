@@ -53,16 +53,26 @@ export default async function authRoutes(app, { config, db }) {
     { config: perIp(CODE_REQUESTS_PER_IP_PER_HOUR, '1 hour') },
     async (request) => {
       const email = readEmail(request.body?.email);
-      const user = findSignInUser(db, email);
-      if (user) {
-        // Not awaited: sending takes a moment, and an answer that came back
-        // slower for real accounts would tell a stranger who has one.
-        sendSignInCode(app, user, { ip: clientIp(request) })
+      const ip = clientIp(request);
+      // Everything about the address happens after the answer: looking it up,
+      // making the code and sending it. Real and unknown addresses take the
+      // same path to the same 200, so how fast it came back tells a stranger
+      // nothing about who has an account.
+      setImmediate(() => {
+        let user;
+        try {
+          user = findSignInUser(db, email);
+        } catch (err) {
+          request.log.error({ err }, 'Could not look up a sign-in address');
+          return;
+        }
+        if (!user) return;
+        sendSignInCode(app, user, { ip })
           .then(({ sent }) => {
             if (!sent) request.log.info({ userId: user.id }, 'Sign-in code not sent: hourly limit reached');
           })
           .catch((err) => request.log.error({ err, userId: user.id }, 'Could not send a sign-in code'));
-      }
+      });
       return { ok: true };
     },
   );

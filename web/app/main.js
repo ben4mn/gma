@@ -88,7 +88,7 @@ async function render(nav = {}) {
 
 async function boot() {
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {});
+    navigator.serviceWorker.register('/sw.js', { scope: '/', updateViaCache: 'none' }).catch(() => {});
     navigator.serviceWorker.addEventListener('message', (event) => {
       if (event.data?.type === 'navigate' && event.data.url) {
         const url = new URL(event.data.url, location.href);

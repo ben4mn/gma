@@ -59,15 +59,33 @@ function peerAddress(request) {
   return request.raw?.socket?.remoteAddress ?? request.socket?.remoteAddress ?? '';
 }
 
+// Did this request reach the app through a trusted proxy (TRUST_PROXY)? Only
+// then are the proxy's headers (CF-Connecting-IP, X-Forwarded-Proto) believed.
+// `trust` defaults to the app's TRUST_PROXY.
+export function fromTrustedProxy(request, trust = trustFor(request.server?.config)) {
+  return trust(peerAddress(request));
+}
+
 // The client's address, worked out from scratch. `trust` defaults to the
 // app's TRUST_PROXY.
 export function resolveClientIp(request, trust = trustFor(request.server?.config)) {
   const header = request.headers?.['cf-connecting-ip'];
   if (typeof header === 'string' && header.length > 0 && header.length <= MAX_HEADER_LENGTH) {
     const candidate = normalizeAddress(header);
-    if (net.isIP(candidate) !== 0 && trust(peerAddress(request))) return candidate;
+    if (net.isIP(candidate) !== 0 && fromTrustedProxy(request, trust)) return candidate;
   }
   return normalizeAddress(request.ip);
+}
+
+// The scheme the visitor used, as a trusted proxy reports it in
+// X-Forwarded-Proto ('http' or 'https'), or null when no trusted proxy said.
+// The first entry is the one the visitor's own request came in on.
+export function forwardedProto(request, trust = trustFor(request.server?.config)) {
+  const header = request.headers?.['x-forwarded-proto'];
+  if (typeof header !== 'string' || header.length === 0 || header.length > MAX_HEADER_LENGTH) return null;
+  if (!fromTrustedProxy(request, trust)) return null;
+  const proto = header.split(',')[0].trim().toLowerCase();
+  return proto === 'http' || proto === 'https' ? proto : null;
 }
 
 // The client's address: what the onRequest hook worked out, or the same

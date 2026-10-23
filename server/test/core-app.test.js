@@ -262,7 +262,7 @@ describe('pages', () => {
       assert.equal(res.statusCode, 200, url);
       assert.match(res.body, /family shell/);
       assert.match(res.headers['content-type'], /text\/html/);
-      assert.equal(res.headers['cache-control'], 'no-cache');
+      assert.equal(res.headers['cache-control'], 'no-cache, no-transform');
     }
   });
 
@@ -284,7 +284,7 @@ describe('pages', () => {
     const frame = await get('/grandma/', device);
     assert.equal(frame.statusCode, 200);
     assert.match(frame.body, /frame shell/);
-    assert.equal(frame.headers['cache-control'], 'no-cache');
+    assert.equal(frame.headers['cache-control'], 'no-cache, no-transform');
     assert.match((await get('/grandma/', admin)).body, /frame shell/);
     assert.equal((await get('/grandma/', member)).statusCode, 302);
     assert.equal((await get('/grandma/')).statusCode, 302);

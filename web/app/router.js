@@ -43,6 +43,24 @@ export function matchRoute(pathname) {
   return null;
 }
 
+/**
+ * Where to go after signing in (?next=): a path on this site, or '/' for
+ * anything that would leave it (//evil.example, /\evil.example, https:…).
+ * The server checks the same way when it writes the parameter.
+ */
+export function safeNext(next, origin) {
+  if (typeof next !== 'string' || next === '') return '/';
+  try {
+    const url = new URL(next, origin);
+    const out = url.pathname + url.search + url.hash;
+    // A dot segment can collapse into a same-origin path that starts with '//'
+    // ('/x/..//evil.example'), which the browser would read as another host.
+    return url.origin === origin && !out.startsWith('//') ? out : '/';
+  } catch {
+    return '/';
+  }
+}
+
 /** Should a click on this URL stay inside the app? (Media, the API and Grandma's frame never do.) */
 export function isAppLink(url, origin) {
   if (url.origin !== origin) return false;

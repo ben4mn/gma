@@ -56,10 +56,40 @@ cloudflared tunnel info gma              # on the host: 4 connections from this 
 ## 3. Zone settings for this hostname
 
 The app sends a strict Content-Security-Policy, so anything Cloudflare injects
-into pages would be blocked or break the page. For gma.4mn.org (Rules →
-Configuration Rules, matching `http.host eq "gma.4mn.org"`):
+into pages would be blocked or break the page. It marks every HTML page
+`Cache-Control: no-cache, no-transform` (`no-transform` stops Cloudflare's
+automatic Web Analytics beacon and its other HTML rewrites). Scripts,
+stylesheets, the manifest and the service workers are plain `no-cache`:
+`no-transform` there would also stop Cloudflare's Brotli/gzip, and none of its
+rewrites touch them. It answers a plain-http visit that
+comes through the tunnel (`X-Forwarded-Proto: http`) with a 301 to the same
+path on `https://gma.4mn.org` (a POST or other method gets a 400). The zone
+settings below are belt and braces on top of that. Several of them are
+**zone-wide**: they change every 4mn.org site, not only gma, so check Ben's other
+sites after changing one. Where a setting has a per-host form, use it (Rules →
+Configuration Rules or Cache Rules, matching `http.host eq "gma.4mn.org"`).
 
-- Rocket Loader and Email Address Obfuscation: off (both inject scripts).
+| Setting | Where | Want | Scope |
+|---|---|---|---|
+| Always Use HTTPS | SSL/TLS → Edge Certificates | On. Or, to leave the other sites alone, a Redirect Rule (Rules → Redirect Rules) for `http.host eq "gma.4mn.org" and not ssl` → `https://gma.4mn.org${path}` with the query kept, 301. The app redirects anyway, so this is optional | **zone-wide** (the Redirect Rule is per host) |
+| Web Analytics automatic setup (RUM) | Analytics & Logs → Web Analytics → the site → Manage site | Automatic setup off for gma.4mn.org (or a Configuration Rule for the host with Disable RUM on). Its beacon is a third-party script the CSP blocks | per host |
+| Browser Cache TTL | Caching → Configuration | Respect Existing Headers. Or keep the zone's value and add the Cache Rule below | **zone-wide** (the Cache Rule is per host) |
+| Minimum TLS Version | SSL/TLS → Edge Certificates | TLS 1.2 | **zone-wide: affects every 4mn.org site**, so check the others still load (every current browser speaks 1.2) |
+| Rocket Loader | Speed → Optimization, or a Configuration Rule for the host | Off (it rewrites every script tag) | zone-wide toggle; per host by rule |
+| Email Address Obfuscation | Scrape Shield, or a Configuration Rule for the host | Off (it injects a script) | zone-wide toggle; per host by rule |
+
+**Required (seen live on 2026-10-23):** the zone's 4-hour Browser Cache TTL
+replaces the app's `no-cache` with `cache-control: max-age=14400` on
+`/app/*.js`, `/shared/*.css` and `/grandma/*.js`. Add a Cache Rule (Rules →
+Cache Rules) for `http.host eq "gma.4mn.org"` with **Browser TTL: Respect origin
+TTL** (leave Edge TTL alone; the rule needs no "Eligible for cache" change).
+Without it, a deploy can take up to 4 hours to reach a phone. The service
+workers soften this (they precache with `cache: 'reload'` and register with
+`updateViaCache: 'none'`, so a new version is noticed and fetched fresh), but
+plain page loads outside the service worker still get the stale copy.
+
+And, as before:
+
 - No Cache Rule that caches `/media/*` or `/api/*`. The app marks media
   `private`, so Cloudflare won't cache it by default; keep it that way.
 - No Cloudflare Access in front of it: Grandma's frame and the installed phone
@@ -76,6 +106,11 @@ curl -s  http://127.0.0.1:3064/healthz        # on the box: {"ok":true,"db":true
 curl -sI https://gma.4mn.org/healthz          # HTTP/2 200, x-robots-tag: noindex, nofollow
 curl -sI https://gma.4mn.org/                 # 302 to /signin?next=%2F
 curl -sI https://gma.4mn.org/ | grep -i strict-transport-security
+curl -sI 'http://gma.4mn.org/mine?x=1' | grep -i '^location'      # https://gma.4mn.org/mine?x=1 (a 301, from the app or from Always Use HTTPS)
+curl -sI https://gma.4mn.org/signin | grep -i cache-control       # no-cache, no-transform
+curl -sI https://gma.4mn.org/app/main.js | grep -i -E 'cache-control|content-encoding'  # no-cache (max-age=14400 means: add the Cache Rule in §3); br or gzip
+curl -s  https://gma.4mn.org/signin | grep -c cloudflareinsights   # 0: no Web Analytics beacon injected
+curl -s  http://127.0.0.1:3064/healthz -H 'X-Forwarded-Proto: http' # on the box: still 200 (the debug port is never redirected)
 ```
 
 Then on a phone: open `https://gma.4mn.org/signin`, request a code (with

@@ -4,7 +4,7 @@
 import { h, mount } from '../../shared/dom.js';
 import { icon } from '../../shared/icons.js';
 import { api } from '../../shared/api.js';
-import { navigate } from '../router.js';
+import { navigate, safeNext } from '../router.js';
 import { hasPasskeyHint, setPasskeyHint } from '../session.js';
 import { detectInAppBrowser, openInBrowserSteps } from '../platform.js';
 import { passkeysSupported, platformPasskeysAvailable, prefetchOptions, fetchLoginOptions, fetchRegisterOptions, signInWithPasskey, registerPasskey, registrationFailure } from '../passkeys.js';
@@ -48,7 +48,7 @@ function inAppNotice() {
 /** After any sign-in: offer a passkey if the server asks, then the Home Screen guide, then home. */
 function afterSignIn(main, ctx, res) {
   ctx.signedIn(res);
-  const next = safeNext(ctx.url.searchParams.get('next'));
+  const next = safeNext(ctx.url.searchParams.get('next'), location.origin);
   const finish = () => {
     const platform = currentPlatform();
     if (!platform.standalone && platform.os !== 'other' && !sessionStorageFlag('gma.install.shown')) return installStep(main, next);
@@ -67,10 +67,6 @@ function sessionStorageFlag(key) {
     sessionStorage.setItem(key, '1');
     return was;
   } catch { return false; }
-}
-
-function safeNext(next) {
-  return next && next.startsWith('/') && !next.startsWith('//') ? next : '/';
 }
 
 function passkeyOffer(main, done) {
