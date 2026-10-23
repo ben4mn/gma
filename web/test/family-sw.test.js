@@ -8,7 +8,8 @@ const webDir = fileURLToPath(new URL('..', import.meta.url));
 const source = readFileSync(join(webDir, 'sw.js'), 'utf8');
 
 // Run the worker's top level with a stand-in `self` that records its listeners.
-function loadWorker() {
+// `fetch` and `caches` stand in for the worker's globals when a test needs them.
+function loadWorker({ fetch, caches } = {}) {
   const listeners = {};
   const shown = [];
   const self = {
@@ -16,7 +17,7 @@ function loadWorker() {
     addEventListener: (type, fn) => { listeners[type] = fn; },
     registration: { showNotification: (title, options) => { shown.push({ title, options }); return Promise.resolve(); } },
   };
-  const exports = new Function('self', `${source}\nreturn { SHELL, notificationFromPayload };`)(self);
+  const exports = new Function('self', 'fetch', 'caches', `${source}\nreturn { SHELL, notificationFromPayload };`)(self, fetch, caches);
   return { ...exports, listeners, shown };
 }
 
@@ -79,4 +80,34 @@ test('the family worker leaves every /grandma address to the frame’s own worke
     assert.equal(answered(path, 'no-cors'), false, path);
   }
   assert.equal(answered('/mine', 'navigate'), true, 'a family page is still the family worker’s');
+});
+
+test('a page is kept for offline launches only when the server marks it as the shell, never the landing page', async () => {
+  const stored = new Map();
+  const cache = {
+    put: async (key, res) => { stored.set(key, await res.text()); },
+    match: async (key) => (stored.has(key) ? new Response(stored.get(key), { headers: { 'content-type': 'text/html' } }) : undefined),
+  };
+  const caches = { open: async () => cache, match: async () => undefined };
+  let next;
+  const { listeners } = loadWorker({ fetch: async () => next, caches });
+  const navigate = async (path, body, headers = {}) => {
+    next = new Response(body, { headers: { 'content-type': 'text/html; charset=utf-8', ...headers } });
+    let answer;
+    listeners.fetch({
+      request: { method: 'GET', url: `https://gma.4mn.org${path}`, mode: 'navigate', headers: new Headers() },
+      respondWith: (p) => { answer = p; },
+    });
+    const res = await answer;
+    await new Promise((resolve) => setTimeout(resolve, 0)); // the worker doesn't wait for its cache write
+    return res;
+  };
+
+  await navigate('/', '<landing>');
+  assert.equal(stored.has('/__shell'), false, 'the landing page (signed out at /) is not the shell');
+  await navigate('/signin', '<shell>', { 'x-gma-page': 'shell' });
+  assert.equal(stored.get('/__shell'), '<shell>');
+  await navigate('/', '<landing>');
+  await navigate('/landing.html', '<landing>');
+  assert.equal(stored.get('/__shell'), '<shell>', 'a later visit to the landing page keeps the real shell');
 });

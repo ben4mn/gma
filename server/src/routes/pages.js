@@ -10,6 +10,14 @@
 // - Every family page path serves the same shell, web/index.html. Signed-out
 //   visitors to a private page go to /signin?next=<path>. /signin, /confirm and
 //   /join/:token are public (the service worker precaches the shell from /signin).
+// - GET / is the one exception: signed in it is the shell, Grandma's frame (a
+//   device session) goes to /grandma/, and a signed-out visitor gets the landing
+//   page, web/landing.html: a short explanation for anyone who has the link. It
+//   is static, holds no data and is noindex like every page (the header below
+//   and its own meta tag); its stylesheet and pictures are ordinary static files
+//   (/landing.css, /assets/landing/*). Only the shell is sent with
+//   x-gma-page: shell, so the family worker never keeps the landing page as
+//   its offline copy.
 // - /grandma/ serves the frame, web/grandma/index.html, to a paired frame (or an
 //   admin). GET /grandma (no slash, the pairing link) belongs to the frame routes.
 //   The frame's service worker, /grandma/sw.js, is sent with
@@ -32,8 +40,10 @@ const REVALIDATE_HTML = 'no-cache, no-transform';
 const FRAME_SHELL = '/grandma/index.html';
 const FRAME_WORKER = '/grandma/sw.js';
 const FRAME_WORKER_SCOPE = '/grandma';
+const FRAME_HOME = '/grandma/';
+const LANDING = 'landing.html';
 
-const PRIVATE_PAGES = ['/', '/from-grandma', '/mine', '/upload', '/you'];
+const PRIVATE_PAGES = ['/from-grandma', '/mine', '/upload', '/you'];
 const PUBLIC_PAGES = ['/signin', '/confirm', '/join/:token'];
 const ADMIN_PAGES = ['/admin', '/admin/*'];
 
@@ -95,13 +105,24 @@ export default async function pageRoutes(app, { config }) {
     },
   });
 
+  // `x-gma-page: shell` tells the family service worker (web/sw.js) this is
+  // the shell it may keep for offline launches; the landing page, also at /,
+  // never carries it.
   function shell(reply) {
-    return reply.header('cache-control', REVALIDATE_HTML).sendFile('index.html');
+    return reply.header('cache-control', REVALIDATE_HTML).header('x-gma-page', 'shell').sendFile('index.html');
   }
 
   for (const url of PUBLIC_PAGES) {
     app.get(url, async (request, reply) => shell(reply));
   }
+
+  // Home: the family shell, the frame's own page, or the landing page.
+  app.get('/', async (request, reply) => {
+    authenticate(request, reply);
+    if (request.user) return shell(reply);
+    if (request.device) return reply.redirect(FRAME_HOME, 302);
+    return reply.header('cache-control', REVALIDATE_HTML).sendFile(LANDING);
+  });
 
   for (const url of PRIVATE_PAGES) {
     app.get(url, async (request, reply) => {
@@ -120,7 +141,7 @@ export default async function pageRoutes(app, { config }) {
     });
   }
 
-  for (const url of ['/grandma/', FRAME_SHELL]) {
+  for (const url of [FRAME_HOME, FRAME_SHELL]) {
     app.get(url, async (request, reply) => {
       authenticate(request, reply);
       if (!mayOpenFrame(request)) return signInRedirect(request, reply);

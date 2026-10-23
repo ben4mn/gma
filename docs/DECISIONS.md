@@ -76,8 +76,19 @@ These were the recommended defaults in Phase 1; each is a setting or a small cha
 - Ben (2026-10-22): build right on gma.4mn.org (no `draft.` subdomain). Nobody gets a link until he says so. It stays invite-only and `noindex`, with only fake family data, until then.
 - Host: the Debian homelab (`ben@192.168.68.69`), in `/home/ben/gma`. 4mn.org's DNS is on Cloudflare; the one new record is `gma.4mn.org → tunnel gma`.
 
+## 2026-10-23: Email goes out through Ben's Gmail (SMTP), not Resend
+
+- Ben (2026-10-23) wants real sign-in and invite emails now, sent from his Gmail with an app password he already made for an older project. Resend for `auth.4mn.org` (and its SPF/DKIM/DMARC) isn't needed: Google signs Gmail's mail itself.
+- **`EMAIL_TRANSPORT=smtp`** sends through `nodemailer` (10.x, no dependencies) with `SMTP_HOST` `smtp.gmail.com`, `SMTP_PORT` 465 and implicit TLS by default; on 587, STARTTLS is required. One connection per message, no pool; timeouts 10 s to connect, 10 s for the greeting, 20 s of socket silence. `SMTP_USER` and `SMTP_PASS` are required with `smtp` (a `ConfigError` at start otherwise, in every environment, like `RESEND_API_KEY` with `resend`). `console` and `resend` stay.
+- **From**: `"Grandma's family" <SMTP_USER>` by default. Gmail rewrites From to the account unless the address is a verified "Send mail as" alias, so an `EMAIL_FROM` with another address logs one warning at start rather than failing.
+- **The password never passes through the orchestrator.** Ben runs `bash deploy/use-gmail.sh [/path/to/another/project/.env]` on the server himself: it reads the other project's `.env` without sourcing it, finds the address and the password under the usual key names, prints only which names it used, asks for whatever is missing (the password with `read -s`), backs up `.env` (0600), writes the seven keys in place (0600; `SMTP_SECURE=true` too, so an older 587 setting can't linger; a password with a `'` or a trailing `\` is refused, since docker compose would misread it in single quotes), restarts gma and offers a test email (`npm run -s email:test -- --to …`, which prints only `sent` or the error). `--find` lists the `.env` files in his home (three levels down) that hold a password under those names, with the names only, for when he doesn't remember which project has it. The password is written by bash builtins only: never on a command line (`ps`), never exported, never echoed.
+- The script first checks the running image knows `smtp`; an older image would refuse the new `.env` and leave the app restarting, so it stops there and says to rebuild.
+- Errors: nodemailer's own messages can quote the SMTP reply, the recipient and the AUTH command, so an `EmailError` carries only our sentence, nodemailer's code, the reply code and the recipient's domain. The config keeps `smtpPass` out of its enumerable keys.
+- Only a transport that really emails counts as emailed for invites: `smtp` and `resend` do, `console` never does (unchanged).
+- Limit: Gmail sends about 500 emails a day from one account (each sign-in code or invite is one). A family of a few dozen needs a handful a day. If it ever matters, `resend` is still there.
+
 ## Still open
 
 - Pi hardware: which 10" panel (DSI with hardware dimming vs HDMI + USB touch), SD vs USB SSD, the mic array, the speaker, Wi-Fi vs Ethernet at Grandma's (Phase 4).
-- Resend for `auth.4mn.org` (SPF/DKIM/DMARC) before inviting the family; until then codes are printed in `docker compose logs app`.
+- Ben runs `deploy/use-gmail.sh` on the server (2026-10-23 above) before inviting the family; until then codes are printed in `docker compose logs app`.
 - A daily cloud backup of the Seagate drive (Ben's plan).

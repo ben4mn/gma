@@ -1,0 +1,351 @@
+/* The public landing page at / (web/landing.html), in Heirloom: the paper,
+   ink, terracotta and sage from /shared/tokens.css. No script, nothing from
+   another origin. From 360 px phones to 1440 px desktops; every target ≥ 44 px,
+   every text colour ≥ 7:1 on its background (cream on terracotta 7.6:1). */
+
+html { scroll-behavior: auto; }
+body {
+  min-height: 100vh;
+  font-size: 18px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+.wrap {
+  width: 100%;
+  max-width: 1180px;
+  margin-inline: auto;
+  padding-inline: max(20px, env(safe-area-inset-left)) max(20px, env(safe-area-inset-right));
+}
+@media (min-width: 720px) {
+  .wrap { padding-inline: 40px; }
+}
+
+h1, h2, h3 {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-variation-settings: var(--serif-soft);
+  font-weight: 600;
+  color: var(--ink);
+  text-wrap: balance;
+}
+h1 { font-size: clamp(42px, 8.4vw, 72px); line-height: 1.02; letter-spacing: -0.015em; }
+h2 { font-size: clamp(30px, 4.6vw, 44px); line-height: 1.08; letter-spacing: -0.01em; }
+h3 { font-size: clamp(21px, 2.2vw, 24px); line-height: 1.2; }
+p { margin: 0; text-wrap: pretty; }
+strong { font-weight: 700; color: var(--ink); }
+
+/* ---------- skip link: hidden until focused ---------- */
+.skip {
+  position: absolute;
+  left: -9999px;
+  top: 8px;
+  z-index: 10;
+  padding: 12px 18px;
+  border-radius: var(--radius-card);
+  background: var(--card);
+  color: var(--ink);
+  font-weight: 700;
+  box-shadow: var(--shadow-card);
+}
+.skip:focus { left: 12px; }
+main:focus { outline: none; }
+
+/* ---------- buttons ---------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 52px;
+  min-width: 44px;
+  padding: 0 26px;
+  border-radius: 16px;
+  font-family: var(--font-sans);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+.btn--primary {
+  min-height: 60px;
+  padding: 0 34px;
+  background: var(--terracotta);
+  color: var(--cream);
+  box-shadow: var(--shadow-card);
+}
+.btn--primary:hover { background: var(--terracotta-press); }
+.btn--primary:active { background: var(--terracotta-press); box-shadow: var(--shadow-press); }
+.btn--quiet {
+  background: var(--card);
+  color: var(--sage);
+  box-shadow: inset 0 0 0 2px var(--sage), var(--shadow-press);
+}
+.btn--quiet:hover { background: var(--sage-tint); color: var(--sage-press); }
+.btn:focus-visible, .skip:focus-visible {
+  outline: 3px solid var(--sage);
+  outline-offset: 3px;
+}
+
+/* ---------- top bar ---------- */
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: max(18px, env(safe-area-inset-top));
+  padding-bottom: 8px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-serif);
+  font-variation-settings: var(--serif-soft);
+  font-size: 21px;
+  font-weight: 600;
+  color: var(--ink);
+}
+/* The album corner: a little gold paper pocket (decorative). */
+.mark {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  background: linear-gradient(135deg, #C99A45 0%, var(--gold) 55%, #9C6F22 100%);
+  clip-path: polygon(0 0, 100% 0, 0 100%);
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--ink-muted);
+}
+
+/* ---------- hero: the words, then the frame ---------- */
+.hero {
+  display: grid;
+  gap: 36px;
+  padding-top: 28px;
+  padding-bottom: 56px;
+}
+.lede {
+  margin-top: 18px;
+  max-width: 34ch;
+  font-size: clamp(19px, 2.1vw, 22px);
+  line-height: 1.45;
+  color: var(--ink-muted);
+}
+.way-in {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px 22px;
+  margin-top: 30px;
+}
+.invite {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+
+/* The frame: a dark wooden-ish bezel around the screenshot, like the real touchscreen. */
+.screen { margin: 0; }
+.bezel {
+  padding: clamp(8px, 1.4vw, 16px);
+  border-radius: clamp(12px, 1.8vw, 20px);
+  background: #2B2119;
+  box-shadow: var(--shadow-print), inset 0 0 0 1px rgba(255, 248, 236, 0.08);
+}
+.bezel img {
+  width: 100%;
+  height: auto;
+  border-radius: 4px;
+}
+figcaption {
+  margin-top: 14px;
+  font-size: 16px;
+  line-height: 1.45;
+  color: var(--ink-muted);
+}
+
+@media (min-width: 960px) {
+  .hero {
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    align-items: center;
+    gap: 56px;
+    padding-top: 48px;
+    padding-bottom: 88px;
+  }
+}
+
+/* ---------- how it works ---------- */
+.how {
+  padding: 56px 0;
+  background: var(--card);
+  border-block: 1.5px solid var(--paper-deep);
+}
+.steps {
+  display: grid;
+  gap: 18px;
+  margin: 28px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.step {
+  position: relative;
+  padding: 22px 22px 24px;
+  border-radius: var(--radius-card);
+  background: var(--paper);
+}
+.step h3 { margin-top: 14px; }
+.step p { margin-top: 8px; color: var(--ink-muted); }
+.num {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--terracotta);
+  color: var(--cream);
+  font-family: var(--font-serif);
+  font-variation-settings: var(--serif-soft);
+  font-size: 22px;
+  font-weight: 650;
+}
+@media (min-width: 840px) {
+  .how { padding: 80px 0; }
+  .steps { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
+}
+
+/* ---------- what the family sees: the words, then the phone (on a wide
+   screen the phone moves to the left) ---------- */
+.family {
+  display: grid;
+  gap: 36px;
+  justify-items: center;
+  padding-top: 64px;
+  padding-bottom: 64px;
+}
+.phone { margin: 0; width: min(300px, 82vw); }
+.phone-bezel {
+  padding: 9px;
+  border-radius: 42px;
+  background: #2B2119;
+  box-shadow: var(--shadow-print), inset 0 0 0 1px rgba(255, 248, 236, 0.08);
+}
+.phone-bezel img {
+  width: 100%;
+  height: auto;
+  border-radius: 34px;
+}
+.family-words { max-width: 560px; justify-self: start; }
+.family-words p { margin-top: 16px; color: var(--ink-muted); }
+.family-words h2 + p { margin-top: 18px; }
+.tabs {
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.tabs li {
+  padding: 12px 0 12px 18px;
+  border-left: 3px solid var(--terracotta-tint);
+  color: var(--ink-muted);
+}
+.tabs li + li { margin-top: 6px; }
+@media (min-width: 840px) {
+  .family {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 72px;
+    padding-top: 96px;
+    padding-bottom: 96px;
+  }
+  .phone { width: 300px; order: -1; }
+}
+
+/* ---------- principles: index cards ---------- */
+.principles {
+  padding: 56px 0 64px;
+  background: var(--paper-deep);
+}
+.cards {
+  display: grid;
+  gap: 16px;
+  margin: 28px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.card {
+  padding: 22px 22px 24px;
+  border-radius: var(--radius-card);
+  background: var(--card);
+  border-top: 4px solid var(--terracotta);
+  box-shadow: var(--shadow-card);
+}
+.card p { margin-top: 8px; color: var(--ink-muted); }
+@media (min-width: 640px) {
+  .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (min-width: 1000px) {
+  .principles { padding: 88px 0 96px; }
+  .cards { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; }
+}
+
+/* ---------- privacy ---------- */
+.privacy {
+  padding-top: 64px;
+  padding-bottom: 64px;
+}
+.promises {
+  display: grid;
+  gap: 4px 40px;
+  margin: 24px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.promises li {
+  position: relative;
+  padding: 14px 0 14px 36px;
+  border-bottom: 1.5px solid var(--paper-deep);
+  color: var(--ink-muted);
+}
+/* a sage tick before each promise (decorative) */
+.promises li::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 21px;
+  width: 16px;
+  height: 9px;
+  border-left: 3px solid var(--sage);
+  border-bottom: 3px solid var(--sage);
+  transform: rotate(-45deg);
+}
+@media (min-width: 840px) {
+  .privacy { padding-top: 88px; padding-bottom: 88px; }
+  .promises { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* ---------- footer ---------- */
+.foot {
+  padding: 32px 0 max(32px, env(safe-area-inset-bottom));
+  background: var(--card);
+  border-top: 1.5px solid var(--paper-deep);
+}
+.foot-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px 24px;
+}
+.foot p {
+  max-width: 46ch;
+  font-family: var(--font-serif);
+  font-variation-settings: var(--serif-soft);
+  font-size: 19px;
+  line-height: 1.4;
+  color: var(--ink);
+}

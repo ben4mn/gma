@@ -5,7 +5,7 @@
 // - API GETs are network-first, with the last good answer when offline.
 // - Every push shows a notification (iOS revokes push for silent ones).
 
-const VERSION = 'family-2026-10-23-2';
+const VERSION = 'family-2026-10-23-3';
 const SHELL_CACHE = `shell-${VERSION}`;
 const PAGE_CACHE = 'pages';
 const MEDIA_CACHE = 'media-v1';
@@ -123,7 +123,8 @@ async function page(request) {
   try {
     const res = await fetch(request);
     // Every family path serves the same shell; keep the newest good copy for offline launches.
-    if (res.status === 200 && !res.redirected && (res.headers.get('content-type') || '').includes('text/html')) {
+    // Only what the server marks as the shell: the landing page a signed-out visitor gets at / isn't.
+    if (res.status === 200 && !res.redirected && res.headers.get('x-gma-page') === 'shell') {
       cache.put('/__shell', res.clone());
     }
     return res;

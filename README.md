@@ -104,9 +104,8 @@ mounted, the app and the worker refuse to start rather than write photos to the 
    Fill in `.env`:
    - `SECRET_KEY`: `openssl rand -base64 48`
    - `VAPID_SUBJECT`: a real `mailto:` address
-   - `EMAIL_TRANSPORT=console` until Resend is set up for auth.4mn.org: sign-in
-     codes then appear in `docker compose logs app`. Afterwards set `resend`
-     and `RESEND_API_KEY`.
+   - Leave `EMAIL_TRANSPORT=console` for now: sign-in codes appear in
+     `docker compose logs app` until step 6 switches email to Gmail.
    - `GMA_TUNNEL_CREDENTIALS` already holds the tunnel's credentials path.
 
    Never commit `.env`, and keep a copy of it in the password manager
@@ -132,10 +131,34 @@ mounted, the app and the worker refuse to start rather than write photos to the 
    cloudflared tunnel route dns gma gma.4mn.org
    ```
    Then sign in at `https://gma.4mn.org/signin` (the code is in `docker compose logs app`).
-6. Pair the frame in `/admin` → The frame (or
+6. Send email from Gmail, before inviting anyone. Ben runs this himself, so the
+   app password never leaves the box. Give it another project's `.env` that
+   already sends through Gmail (it reads the file, never runs it, and prints
+   only which key names it used), or no path to type the address and the app
+   password ([make one](https://myaccount.google.com/apppasswords) if needed):
+   ```sh
+   cd /home/ben/gma && bash deploy/use-gmail.sh --find     # which .env files in ~ hold one (key names only)
+   bash deploy/use-gmail.sh /path/to/another/project/.env
+   ```
+   It checks the image can send through SMTP (if not, it says to run
+   `git pull && docker compose up -d --build` first and changes nothing),
+   saves `.env` as `.env.bak-<date>`, writes `EMAIL_TRANSPORT=smtp`, `SMTP_HOST`,
+   `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS` and `EMAIL_FROM` (both
+   files 0600; a password with a `'` in it or ending in `\` is refused, since
+   `.env` can't hold it safely),
+   restarts gma, waits for it to be healthy and offers to send a test email.
+   Test again any time:
+   ```sh
+   docker compose exec -T app npm run -s email:test -- --to you@example.com   # prints "sent" or the error
+   ```
+   Undo: `cp .env.bak-<date> .env && docker compose up -d`. Mail comes from
+   `"Grandma's family" <your Gmail address>` (Gmail sends from the account
+   whatever `EMAIL_FROM` says, unless it's a verified "Send mail as" alias) and
+   Gmail allows about 500 a day, far more than a family needs.
+7. Pair the frame in `/admin` → The frame (or
    `docker compose exec app npm run device:pair -- --name "Grandma's frame"`), and
    put the link in the kiosk setup: [`pi/README.md`](pi/README.md).
-7. Backups: the worker writes a database snapshot to the drive every night, so a
+8. Backups: the worker writes a database snapshot to the drive every night, so a
    cloud backup of the drive holds everything. What is and isn't covered, and how
    to restore: [`deploy/backup.md`](deploy/backup.md).
 

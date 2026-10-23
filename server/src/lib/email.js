@@ -1,13 +1,25 @@
-// Sends email through Resend's REST API ('resend') or prints it ('console',
-// development only). Templates return { subject, text, html }.
+// Sends email through SMTP ('smtp': nodemailer, made for Gmail with an app
+// password), Resend's REST API ('resend') or prints it ('console', development
+// and the first days of a deploy). Templates return { subject, text, html }.
 //
 // Tests call captureEmails(config) to receive every message sent with that
-// config instead of printing or sending it.
+// config instead of printing or sending it, and useSmtpFactory(config, fn) to
+// hand the smtp transport a fake nodemailer.
+//
+// An EmailError never carries the message, the password or the recipient's
+// address (only its domain, as `domain`): the app logs it as it is.
+
+import { createTransport } from 'nodemailer';
 
 const RESEND_URL = 'https://api.resend.com/emails';
 const SEND_TIMEOUT_MS = 10_000;
 
+// One connection per message (no pool): a family app sends a few a day.
+// Gmail allows about 500 recipients a day from one account.
+export const SMTP_TIMEOUTS = Object.freeze({ connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 20_000 });
+
 const captures = new WeakMap(); // config → array of sent messages
+const smtpFactories = new WeakMap(); // config → (options) => nodemailer transport
 
 export function captureEmails(config) {
   let box = captures.get(config);
@@ -18,11 +30,84 @@ export function captureEmails(config) {
   return box;
 }
 
+// Tests: the smtp transport builds its nodemailer transport with `factory`.
+export function useSmtpFactory(config, factory) {
+  smtpFactories.set(config, factory);
+}
+
 export class EmailError extends Error {
-  constructor(message, { status } = {}) {
+  constructor(message, { status, code, domain } = {}) {
     super(message);
     this.name = 'EmailError';
     this.status = status;
+    if (code) this.code = code;
+    if (domain) this.domain = domain;
+  }
+}
+
+// The part of an address after the @, for logs; never the whole address.
+function domainOf(address) {
+  const domain = String(address ?? '').split('@').pop().trim().toLowerCase();
+  return /^[a-z0-9.-]+\.[a-z]{2,}$/.test(domain) ? domain : undefined;
+}
+
+// What nodemailer is given for config (`pool` stays off).
+export function smtpOptions(config) {
+  return {
+    host: config.smtpHost,
+    port: config.smtpPort,
+    secure: config.smtpSecure,
+    // Without implicit TLS (port 587), STARTTLS is required: the password
+    // never crosses in the clear.
+    requireTLS: !config.smtpSecure,
+    auth: { user: config.smtpUser, pass: config.smtpPass },
+    ...SMTP_TIMEOUTS,
+    logger: false,
+    debug: false,
+    // The templates never attach anything: no reading files or URLs.
+    disableFileAccess: true,
+    disableUrlAccess: true,
+  };
+}
+
+// nodemailer's error codes, as a sentence. Its own messages can quote the
+// server's reply, the recipient and the AUTH command, so they never pass through.
+const SMTP_REASONS = {
+  EAUTH: 'The email server refused the sign-in: check SMTP_USER and SMTP_PASS; Gmail needs an app password',
+  ENOAUTH: 'The email server wants a sign-in: set SMTP_USER and SMTP_PASS',
+  ETIMEDOUT: 'Could not reach the email server',
+  ECONNECTION: 'Could not reach the email server',
+  ESOCKET: 'Could not reach the email server',
+  EDNS: 'Could not reach the email server',
+  ETLS: 'Could not make a secure connection to the email server',
+  EENVELOPE: 'The email server refused the address',
+  EMESSAGE: 'The email server refused the message',
+  EPROTOCOL: 'The email server answered something unexpected',
+};
+
+function smtpError(err, to) {
+  const code = typeof err?.code === 'string' && /^E[A-Z]{2,20}$/.test(err.code) ? err.code : undefined;
+  const status = Number.isInteger(err?.responseCode) ? err.responseCode : undefined;
+  const reason = SMTP_REASONS[code] ?? 'The email server refused the message';
+  const detail = [code, status].filter(Boolean).join(' ');
+  return new EmailError(detail ? `${reason} (${detail})` : reason, { status, code, domain: domainOf(to) });
+}
+
+async function sendSmtp(config, { from, to, subject, text, html }) {
+  const factory = smtpFactories.get(config) ?? createTransport;
+  let transport;
+  try {
+    transport = factory(smtpOptions(config));
+    const info = await transport.sendMail({ from, to, subject, text, html });
+    return { id: info?.messageId ?? null };
+  } catch (err) {
+    throw smtpError(err, to);
+  } finally {
+    try {
+      transport?.close?.();
+    } catch {
+      // nothing to close
+    }
   }
 }
 
@@ -37,13 +122,16 @@ export async function sendEmail(config, { to, subject, text, html }) {
   }
 
   if (config.emailTransport === 'console') {
-    // Development, and the first days of a deploy before Resend is set up: the
+    // Development, and the first days of a deploy before Gmail is set up: the
     // whole message, so you can copy the code. Nothing was emailed, so callers
     // must not treat it as delivered (`printed: true`): an invite printed here
     // never proves the address.
     console.log(`\n--- email to ${to} ---\nSubject: ${subject}\n\n${text}\n--- end ---\n`);
     return { id: 'console', printed: true };
   }
+
+  // A message SMTP or Resend accepted counts as emailed (no `printed`).
+  if (config.emailTransport === 'smtp') return sendSmtp(config, message);
 
   let response;
   try {
@@ -57,12 +145,13 @@ export async function sendEmail(config, { to, subject, text, html }) {
       signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
     });
   } catch (err) {
-    throw new EmailError(`Could not reach the email service: ${err.message}`);
+    throw new EmailError(`Could not reach the email service: ${err.message}`, { domain: domainOf(to) });
   }
   if (!response.ok) {
     // The response body can echo the message; keep only the status.
     throw new EmailError(`The email service refused the message (HTTP ${response.status})`, {
       status: response.status,
+      domain: domainOf(to),
     });
   }
   const body = await response.json().catch(() => ({}));
@@ -116,6 +205,26 @@ export function signInCodeEmail({ name, code, confirmUrl, minutes = 15 }) {
     ],
     button: { href: confirmUrl, label: 'Sign in with this link' },
     footnote: "If you didn't ask for this, you can ignore this email.",
+  });
+  return { subject, text, html };
+}
+
+// The short message `npm run email:test` sends to check the settings.
+export function testEmail({ publicUrl, transport }) {
+  const subject = "Test email from Grandma's family";
+  const text = [
+    'Hi,',
+    '',
+    `This is a test from ${publicUrl} (EMAIL_TRANSPORT=${transport}). If you can read it, sign-in codes and invites will arrive too.`,
+    '',
+    'Nothing to do; you can delete it.',
+  ].join('\n');
+  const html = layout({
+    paragraphs: [
+      'Hi,',
+      `This is a test from ${escapeHtml(publicUrl)} (EMAIL_TRANSPORT=${escapeHtml(transport)}). If you can read it, sign-in codes and invites will arrive too.`,
+    ],
+    footnote: 'Nothing to do; you can delete it.',
   });
   return { subject, text, html };
 }

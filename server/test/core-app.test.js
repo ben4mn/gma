@@ -248,8 +248,9 @@ describe('pages', () => {
   });
   const get = (url, cookie) => t.app.inject({ url, headers: cookie ? { cookie } : {} });
 
+  // GET / signed out is the landing page (test/landing.test.js).
   test('private family pages send signed-out visitors to /signin', async () => {
-    for (const url of ['/', '/from-grandma', '/mine', '/upload', '/you', '/admin', '/admin/people']) {
+    for (const url of ['/from-grandma', '/mine', '/upload', '/you', '/admin', '/admin/people']) {
       const res = await get(url);
       assert.equal(res.statusCode, 302, url);
       assert.equal(res.headers.location, `/signin?next=${encodeURIComponent(url)}`);

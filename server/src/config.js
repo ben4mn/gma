@@ -1,7 +1,9 @@
-// loadConfig(env) turns environment variables into one frozen config object.
-// Every key in docs/ARCHITECTURE.md#configuration becomes a camelCase property
-// (PUBLIC_URL → publicUrl, MAX_UPLOAD_BYTES → maxUploadBytes, …), plus a few
-// derived values (publicOrigin, dbPath, cookieSecure, isProduction).
+// loadConfig(env, { warn }) turns environment variables into one frozen config
+// object. Every key in docs/ARCHITECTURE.md#configuration becomes a camelCase
+// property (PUBLIC_URL → publicUrl, MAX_UPLOAD_BYTES → maxUploadBytes, …), plus
+// a few derived values (publicOrigin, dbPath, cookieSecure, isProduction).
+// `warn(line)` gets the one-line warnings that don't stop a start (default:
+// console.warn, silent under NODE_ENV=test).
 
 import { isIP } from 'node:net';
 import path from 'node:path';
@@ -72,6 +74,79 @@ function mediaSentinel(env, isProduction) {
   return raw;
 }
 
+// EMAIL_TRANSPORT and the keys each transport needs (docs/ARCHITECTURE.md,
+// Configuration and Server core → Email):
+//   console  prints each message to the log (development, and a new deploy)
+//   resend   Resend's REST API: RESEND_API_KEY
+//   smtp     any SMTP server through nodemailer; made for Gmail with an app
+//            password (deploy/use-gmail.sh): SMTP_USER and SMTP_PASS, with
+//            SMTP_HOST smtp.gmail.com, SMTP_PORT 465 and SMTP_SECURE (implicit
+//            TLS, true on 465) as defaults
+const DEFAULT_FROM_NAME = "Grandma's family";
+const ADDRESS = /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/;
+
+function bool(env, key, fallback) {
+  const raw = str(env, key, undefined);
+  if (raw === undefined) return fallback;
+  if (/^(1|true|yes|on)$/i.test(raw)) return true;
+  if (/^(0|false|no|off)$/i.test(raw)) return false;
+  throw new ConfigError(`${key} must be true or false, got "${raw}".`);
+}
+
+// The address in "Name <address>" or a bare address; null when there is none.
+function emailAddressOf(from) {
+  const value = String(from ?? '').trim();
+  const angle = /<([^<>]*)>\s*$/.exec(value);
+  const address = (angle ? angle[1] : value).trim();
+  return ADDRESS.test(address) ? address : null;
+}
+
+function emailConfig(env, warn) {
+  const emailTransport = str(env, 'EMAIL_TRANSPORT', 'console');
+  if (!['console', 'resend', 'smtp'].includes(emailTransport)) {
+    throw new ConfigError(`EMAIL_TRANSPORT must be console, resend or smtp, got "${emailTransport}".`);
+  }
+  const resendApiKey = str(env, 'RESEND_API_KEY', '');
+  if (emailTransport === 'resend' && !resendApiKey) {
+    throw new ConfigError('RESEND_API_KEY is required when EMAIL_TRANSPORT=resend.');
+  }
+
+  const smtpHost = str(env, 'SMTP_HOST', 'smtp.gmail.com');
+  const smtpPort = int(env, 'SMTP_PORT', 465);
+  if (smtpPort < 1 || smtpPort > 65535) throw new ConfigError(`SMTP_PORT must be a port number (1 to 65535), got "${smtpPort}".`);
+  const smtpSecure = bool(env, 'SMTP_SECURE', smtpPort === 465);
+  const smtpUser = str(env, 'SMTP_USER', '');
+  let smtpPass = str(env, 'SMTP_PASS', '');
+  // Google shows an app password as four groups of four letters; it works
+  // without the spaces, so a copy with them is taken as the 16 letters.
+  if (/^[a-z]{4}( [a-z]{4}){3}$/i.test(smtpPass)) smtpPass = smtpPass.replace(/ /g, '');
+
+  let emailFrom = str(env, 'EMAIL_FROM', undefined);
+  if (emailTransport === 'smtp') {
+    // Never put the password (or anything about it) in these messages.
+    if (!smtpUser) throw new ConfigError('SMTP_USER is required when EMAIL_TRANSPORT=smtp (for Gmail, the address).');
+    if (!smtpPass) throw new ConfigError('SMTP_PASS is required when EMAIL_TRANSPORT=smtp (for Gmail, an app password).');
+    if (emailFrom === undefined) {
+      if (!ADDRESS.test(smtpUser)) {
+        throw new ConfigError('EMAIL_FROM is required when SMTP_USER is not an email address (for example: Grandma\'s family <you@example.com>).');
+      }
+      emailFrom = `"${DEFAULT_FROM_NAME}" <${smtpUser}>`;
+    }
+    const fromAddress = emailAddressOf(emailFrom);
+    if (!fromAddress) {
+      throw new ConfigError(`EMAIL_FROM must be an address or Name <address>, got "${emailFrom}".`);
+    }
+    if (ADDRESS.test(smtpUser) && fromAddress.toLowerCase() !== smtpUser.toLowerCase()) {
+      warn(
+        `gma: EMAIL_FROM's address (${fromAddress}) isn't the SMTP_USER account; Gmail sends it from the account instead unless that address is a verified "Send mail as" alias.`,
+      );
+    }
+  }
+  if (emailFrom === undefined) emailFrom = `${DEFAULT_FROM_NAME} <hello@auth.4mn.org>`;
+
+  return { emailTransport, resendApiKey, emailFrom, smtpHost, smtpPort, smtpSecure, smtpUser, smtpPass };
+}
+
 function parseUrl(key, raw) {
   try {
     const url = new URL(raw);
@@ -82,11 +157,12 @@ function parseUrl(key, raw) {
   }
 }
 
-export function loadConfig(env = process.env) {
+export function loadConfig(env = process.env, { warn } = {}) {
   const nodeEnv = str(env, 'NODE_ENV', 'production');
   if (!['production', 'development', 'test'].includes(nodeEnv)) {
     throw new ConfigError(`NODE_ENV must be production, development or test, got "${nodeEnv}".`);
   }
+  if (typeof warn !== 'function') warn = nodeEnv === 'test' ? () => {} : (line) => console.warn(line);
   const isProduction = nodeEnv === 'production';
   const host = str(env, 'HOST', '0.0.0.0');
   const port = int(env, 'PORT', 8080);
@@ -105,14 +181,7 @@ export function loadConfig(env = process.env) {
   const dataDir = path.resolve(str(env, 'DATA_DIR', isProduction ? '/data' : path.join(REPO_ROOT, 'data')));
   const mediaDir = path.resolve(str(env, 'MEDIA_DIR', isProduction ? '/media' : path.join(REPO_ROOT, 'media')));
 
-  const emailTransport = str(env, 'EMAIL_TRANSPORT', 'console');
-  if (!['console', 'resend'].includes(emailTransport)) {
-    throw new ConfigError(`EMAIL_TRANSPORT must be console or resend, got "${emailTransport}".`);
-  }
-  const resendApiKey = str(env, 'RESEND_API_KEY', '');
-  if (emailTransport === 'resend' && !resendApiKey) {
-    throw new ConfigError('RESEND_API_KEY is required when EMAIL_TRANSPORT=resend.');
-  }
+  const email = emailConfig(env, warn);
 
   const config = {
     nodeEnv,
@@ -127,9 +196,13 @@ export function loadConfig(env = process.env) {
     dbPath: path.join(dataDir, 'gma.sqlite'),
     webDir: path.resolve(str(env, 'WEB_DIR', path.join(REPO_ROOT, 'web'))),
     secretKey,
-    emailTransport,
-    resendApiKey,
-    emailFrom: str(env, 'EMAIL_FROM', "Grandma's family <hello@auth.4mn.org>"),
+    emailTransport: email.emailTransport,
+    resendApiKey: email.resendApiKey,
+    emailFrom: email.emailFrom,
+    smtpHost: email.smtpHost,
+    smtpPort: email.smtpPort,
+    smtpSecure: email.smtpSecure,
+    smtpUser: email.smtpUser,
     vapidPublicKey: str(env, 'VAPID_PUBLIC_KEY', ''),
     vapidPrivateKey: str(env, 'VAPID_PRIVATE_KEY', ''),
     vapidSubject: str(env, 'VAPID_SUBJECT', ''),
@@ -143,5 +216,8 @@ export function loadConfig(env = process.env) {
     // Secure cookies everywhere except plain-http development (http://localhost).
     cookieSecure: isProduction || publicUrlObj.protocol === 'https:',
   };
+  // Readable as config.smtpPass, but left out of Object.keys, JSON.stringify
+  // and util.inspect, so logging the config never prints it.
+  Object.defineProperty(config, 'smtpPass', { value: email.smtpPass, enumerable: false });
   return Object.freeze(config);
 }
