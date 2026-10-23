@@ -1,0 +1,149 @@
+#!/bin/bash
+# Night mode for the frame's panel. Run by gma-display.service (as root).
+#
+#   gma-display            loop forever, applying day/night once a minute
+#   gma-display --once     apply once and exit
+#   gma-display --status   print what it would do, change nothing
+#
+# DSI panel (/sys/class/backlight/* exists): dim to NIGHT_BRIGHTNESS_PERCENT at
+# night, DAY_BRIGHTNESS_PERCENT by day. Never fully off, so a tap still shows
+# something; the web app dims too and swallows the first tap.
+# HDMI panel (no backlight): nothing, the web app dims with CSS. With
+# DISPLAY_OFF_AT_NIGHT=1 the output is switched off with wlr-randr at night
+# (taps do not wake it; it comes back at NIGHT_END).
+set -euo pipefail
+
+# shellcheck source=../lib/gma-kiosk/common.sh
+. /usr/local/lib/gma-kiosk/common.sh
+
+MODE=loop
+case ${1-} in
+    "") ;;
+    --once) MODE=once ;;
+    --status) MODE=status ;;
+    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+    *) gma_die "unknown option: $1 (try --help)" ;;
+esac
+
+LAST_STATE=""
+
+load_settings() {
+    NIGHT_START=$(gma_config_get NIGHT_START 21:00)
+    NIGHT_END=$(gma_config_get NIGHT_END 07:00)
+    NIGHT_PCT=$(gma_config_get NIGHT_BRIGHTNESS_PERCENT 10)
+    DAY_PCT=$(gma_config_get DAY_BRIGHTNESS_PERCENT 100)
+    OFF_AT_NIGHT=$(gma_config_get DISPLAY_OFF_AT_NIGHT 0)
+    OUTPUT_NAME=$(gma_config_get DISPLAY_OUTPUT "")
+    [[ $NIGHT_PCT =~ ^[0-9]+$ ]] || NIGHT_PCT=10
+    [[ $DAY_PCT =~ ^[0-9]+$ ]] || DAY_PCT=100
+    (( NIGHT_PCT >= 1 )) || NIGHT_PCT=1
+    (( NIGHT_PCT <= 100 )) || NIGHT_PCT=100
+    (( DAY_PCT <= 100 )) || DAY_PCT=100
+    (( DAY_PCT >= 1 )) || DAY_PCT=1
+}
+
+current_state() {
+    local now start end
+    start=$(gma_hhmm_to_minutes "$NIGHT_START") || { gma_warn "bad NIGHT_START '$NIGHT_START', treating as day"; echo day; return; }
+    end=$(gma_hhmm_to_minutes "$NIGHT_END") || { gma_warn "bad NIGHT_END '$NIGHT_END', treating as day"; echo day; return; }
+    now=$(( 10#$(date +%H) * 60 + 10#$(date +%M) ))
+    if gma_is_night "$now" "$start" "$end"; then echo night; else echo day; fi
+}
+
+backlights() {
+    local d
+    for d in /sys/class/backlight/*; do
+        [[ -e $d/brightness && -e $d/max_brightness ]] && printf '%s\n' "$d"
+    done
+    return 0
+}
+
+apply_backlight() { # dir percent
+    local dir=$1 pct=$2 max target cur
+    max=$(<"$dir/max_brightness")
+    target=$(( max * pct / 100 ))
+    (( target >= 1 )) || target=1
+    # bl_power 0 = on (4 would power the backlight down, which we never do).
+    if [[ -w $dir/bl_power ]] && [[ $(<"$dir/bl_power") != 0 ]]; then
+        echo 0 >"$dir/bl_power"
+    fi
+    cur=$(<"$dir/brightness")
+    if [[ $cur != "$target" ]]; then
+        echo "$target" >"$dir/brightness"
+        gma_log "${dir##*/}: brightness $cur -> $target of $max ($pct%)"
+    fi
+}
+
+# Prints "<name> <yes|no>" for each wlr-randr output.
+wlr_outputs() {
+    gma_as_kiosk_wayland wlr-randr 2>/dev/null | awk '
+        /^[^ \t]/ { name = $1 }
+        /^[ \t]+Enabled:/ { print name, $2 }'
+}
+
+apply_output_power() { # on|off
+    local want=$1 name enabled found=0
+    while read -r name enabled; do
+        [[ -n $name ]] || continue
+        if [[ -n $OUTPUT_NAME && $name != "$OUTPUT_NAME" ]]; then
+            continue
+        fi
+        found=1
+        if [[ $want == off && $enabled == yes ]]; then
+            gma_as_kiosk_wayland wlr-randr --output "$name" --off && gma_log "$name: off for the night"
+        elif [[ $want == on && $enabled == no ]]; then
+            gma_as_kiosk_wayland wlr-randr --output "$name" --on && gma_log "$name: on for the day"
+        fi
+    done < <(wlr_outputs || true)
+    (( found )) || gma_warn "no Wayland output found yet (kiosk starting?)"
+}
+
+apply() {
+    local state pct dirs dir
+    load_settings
+    state=$(current_state)
+    dirs=$(backlights)
+
+    if [[ $MODE == status ]]; then
+        echo "night window: $NIGHT_START-$NIGHT_END (now $(date +%H:%M), $(timedatectl show -p Timezone --value 2>/dev/null || echo '?'))"
+        echo "state: $state"
+        if [[ -n $dirs ]]; then
+            for dir in $dirs; do
+                echo "backlight ${dir##*/}: $(<"$dir/brightness")/$(<"$dir/max_brightness") (target ${NIGHT_PCT}% at night, ${DAY_PCT}% by day)"
+            done
+        else
+            echo "no backlight: HDMI panel, the web app dims with CSS"
+            echo "DISPLAY_OFF_AT_NIGHT=$OFF_AT_NIGHT"
+            wlr_outputs 2>/dev/null | sed 's/^/output: /' || true
+        fi
+        return 0
+    fi
+
+    if [[ $state != "$LAST_STATE" ]]; then
+        gma_log "it is $state ($NIGHT_START-$NIGHT_END is night)"
+        LAST_STATE=$state
+    fi
+
+    if [[ -n $dirs ]]; then
+        if [[ $state == night ]]; then pct=$NIGHT_PCT; else pct=$DAY_PCT; fi
+        for dir in $dirs; do
+            apply_backlight "$dir" "$pct" || gma_warn "could not set ${dir##*/}"
+        done
+    elif [[ $OFF_AT_NIGHT == 1 ]]; then
+        if [[ $state == night ]]; then
+            apply_output_power off || true
+        else
+            apply_output_power on || true
+        fi
+    fi
+}
+
+if [[ $MODE == loop ]]; then
+    while :; do
+        apply || gma_warn "apply failed; trying again in a minute"
+        # Wake at the top of the next minute so 21:00 means 21:00.
+        sleep $(( 60 - 10#$(date +%S) ))
+    done
+else
+    apply
+fi

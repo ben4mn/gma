@@ -1,0 +1,26 @@
+# Example cloud-init network-config (netplan v2) for Grandma's frame. Imager
+# 2.x writes this from its Wi-Fi screen; put it on the boot partition as
+# "network-config" (no .example). Raspberry Pi OS renders it to NetworkManager.
+#
+# The Wi-Fi password sits here in plain text on the FAT partition. After the
+# first boot NetworkManager has its own copy; once install.sh has run and the
+# frame is on Tailscale you can delete /boot/firmware/network-config.
+# install.sh then makes NetworkManager retry forever and turns Wi-Fi power
+# saving off.
+
+network:
+  version: 2
+  renderer: NetworkManager
+  ethernets:
+    eth0:
+      dhcp4: true
+      optional: true
+  wifis:
+    wlan0:
+      dhcp4: true
+      optional: true
+      regulatory-domain: "US"
+      access-points:
+        "REPLACE_WITH_GRANDMAS_WIFI_NAME":
+          password: "REPLACE_WITH_WIFI_PASSWORD"
+          # hidden: true    # only if the network does not broadcast its name

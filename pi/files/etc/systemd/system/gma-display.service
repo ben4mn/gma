@@ -1,0 +1,15 @@
+# Night mode: dims a DSI backlight (or switches an HDMI output off, if asked)
+# between NIGHT_START and NIGHT_END from /etc/default/gma-kiosk.
+[Unit]
+Description=gma night mode (backlight / output schedule)
+After=gma-kiosk.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/gma-display
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

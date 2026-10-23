@@ -1,0 +1,75 @@
+#!/bin/bash
+# One screen of health for Grandma's frame. Run as root (sudo gma-status);
+# remote/status.sh runs it over SSH. Read-only.
+set -uo pipefail
+
+# shellcheck source=../lib/gma-kiosk/common.sh
+. /usr/local/lib/gma-kiosk/common.sh
+
+section() { printf '\n== %s\n' "$1"; }
+kv() { printf '   %-18s %s\n' "$1" "$2"; }
+
+KIOSK_URL=$(gma_config_get KIOSK_URL)
+ORIGIN=$(gma_origin_of "${KIOSK_URL:-https://gma.4mn.org/grandma}")
+HEALTH_URL=$(gma_config_get HEALTH_URL "$ORIGIN/healthz")
+
+section "Frame"
+kv host "$(hostname) ($(. /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-?}"))"
+kv uptime "$(uptime -p 2>/dev/null || uptime)"
+kv time "$(date '+%F %H:%M %Z'), NTP synced: $(timedatectl show -p NTPSynchronized --value 2>/dev/null || echo '?')"
+if [[ -n $KIOSK_URL ]]; then
+    # Never print the token: just enough to tell two pairings apart.
+    token=${KIOSK_URL##*device=}
+    kv pairing "${KIOSK_URL%%\?*}?device=${token:0:4}... (${#token} chars)"
+else
+    kv pairing "NOT SET: run install.sh --url <pairing URL from /admin>"
+fi
+
+section "Kiosk"
+kv gma-kiosk "$(systemctl is-active gma-kiosk.service 2>/dev/null) (restarts since boot: $(systemctl show -p NRestarts --value gma-kiosk.service 2>/dev/null))"
+kv gma-display "$(systemctl is-active gma-display.service 2>/dev/null)"
+kv gma-netwatch "$(systemctl is-active gma-netwatch.timer 2>/dev/null) (timer)"
+if pgrep -u "$GMA_KIOSK_USER" -f /usr/lib/chromium/chromium >/dev/null 2>&1; then
+    kv chromium "running ($(dpkg-query -W -f='${Version}' chromium 2>/dev/null)$(apt-mark showhold 2>/dev/null | grep -qx chromium && echo ', held'))"
+else
+    kv chromium "NOT running"
+fi
+failed=$(systemctl --failed --no-legend --plain 2>/dev/null | awk '{ print $1 }' | tr '\n' ' ')
+kv "failed units" "${failed:-none}"
+
+section "Display"
+/usr/local/bin/gma-display --status 2>&1 | sed 's/^/   /'
+
+section "Network"
+if curl -fsS -o /dev/null --max-time 8 "$HEALTH_URL" 2>/dev/null; then
+    kv server "answers ($HEALTH_URL)"
+else
+    kv server "NOT answering ($HEALTH_URL)"
+fi
+kv "default route" "$(ip -4 route show default 2>/dev/null | awk '{ print $3 " via " $5; exit }')"
+wifi=$(nmcli -t -f IN-USE,SSID,SIGNAL,CHAN device wifi list --rescan no 2>/dev/null | awk -F: '$1 == "*" { print $2 " (signal " $3 "%, channel " $4 ")" }')
+kv wifi "${wifi:-not on Wi-Fi}"
+kv tailscale "$(tailscale ip -4 2>/dev/null | head -n 1 || echo 'not installed')"
+/usr/local/bin/gma-netwatch --status 2>&1 | sed 's/^/   netwatch: /'
+
+section "Hardware"
+if command -v vcgencmd >/dev/null 2>&1; then
+    kv temperature "$(vcgencmd measure_temp 2>/dev/null | cut -d= -f2)"
+    throttled=$(vcgencmd get_throttled 2>/dev/null | cut -d= -f2)
+    case $throttled in
+        0x0) kv power "ok (never under-voltage or throttled since boot)" ;;
+        "") kv power "?" ;;
+        *) kv power "$throttled: under-voltage or throttling seen since boot (check the supply)" ;;
+    esac
+fi
+kv memory "$(free -m | awk '/^Mem:/ { print $3 " MB used of " $2 " MB" }')"
+kv disk "$(df -h / | awk 'NR == 2 { print $3 " used of " $2 " (" $5 ")" }')"
+kv profile "$(du -sh /var/lib/gma-kiosk/profile 2>/dev/null | cut -f1) (Chromium cache and saved photos)"
+
+section "Audio"
+if rt=$(gma_runtime_dir); then
+    runuser -u "$GMA_KIOSK_USER" -- env XDG_RUNTIME_DIR="$rt" wpctl status 2>/dev/null |
+        sed -n '/^Audio/,/^Video/p' | grep -E 'Sinks:|Sources:|\*' | sed 's/^/   /' || kv wpctl "not available"
+else
+    kv audio "kiosk session not running"
+fi

@@ -1,0 +1,238 @@
+#!/bin/bash
+# Connectivity watchdog. Run once a minute by gma-netwatch.timer (as root).
+#
+#   gma-netwatch            one check (what the timer runs)
+#   gma-netwatch --status   print the current outage state
+#   gma-netwatch --reset    forget the outage state
+#
+# If the gma server answers, all is well. If it does not, check the internet:
+#   - internet up, gma down: Ben's server (or his home internet) is down.
+#     Nothing on the Pi can fix that, so do nothing drastic.
+#   - no internet: after 3 failed checks toggle the Wi-Fi radio, after 10 min
+#     restart NetworkManager, after 30 min reboot (at most once per 6 h).
+#     When a reboot is not allowed, the radio/NetworkManager steps repeat
+#     every 30 min.
+# State lives in /var/lib/gma-kiosk/netwatch so the 6 h rule survives reboots.
+set -euo pipefail
+
+# shellcheck source=../lib/gma-kiosk/common.sh
+. /usr/local/lib/gma-kiosk/common.sh
+
+STATE_DIR=$GMA_STATE_DIR/netwatch
+STATE_FILE=$STATE_DIR/state
+LAST_REBOOT_FILE=$STATE_DIR/last-reboot
+RELOAD_MARKER=/run/gma-kiosk/reload-when-online
+
+TOGGLE_AFTER_CHECKS=3
+RESTART_NM_AFTER_S=$((10 * 60))
+REBOOT_AFTER_S=$((30 * 60))
+REBOOT_MIN_GAP_S=$((6 * 3600))
+REPEAT_CYCLE_S=$((30 * 60))
+
+mkdir -p "$STATE_DIR"
+chmod 0700 "$STATE_DIR"
+
+# --- state (simple KEY=value lines, written atomically) ---------------------
+fail_count=0
+first_fail=0
+toggled_at=0
+nm_restarted_at=0
+cycle_start=0
+
+load_state() {
+    local key value
+    [[ -r $STATE_FILE ]] || return 0
+    while IFS='=' read -r key value; do
+        [[ $value =~ ^[0-9]+$ ]] || continue
+        case $key in
+            fail_count) fail_count=$value ;;
+            first_fail) first_fail=$value ;;
+            toggled_at) toggled_at=$value ;;
+            nm_restarted_at) nm_restarted_at=$value ;;
+            cycle_start) cycle_start=$value ;;
+        esac
+    done <"$STATE_FILE"
+}
+
+save_state() {
+    local tmp
+    tmp=$(mktemp "$STATE_FILE.XXXXXX")
+    printf 'fail_count=%s\nfirst_fail=%s\ntoggled_at=%s\nnm_restarted_at=%s\ncycle_start=%s\n' \
+        "$fail_count" "$first_fail" "$toggled_at" "$nm_restarted_at" "$cycle_start" >"$tmp"
+    mv -f "$tmp" "$STATE_FILE"
+}
+
+clear_state() { rm -f "$STATE_FILE"; }
+
+# --- checks ------------------------------------------------------------------
+KIOSK_URL=$(gma_config_get KIOSK_URL)
+ORIGIN=$(gma_origin_of "${KIOSK_URL:-https://gma.4mn.org/grandma}")
+HEALTH_URL=$(gma_config_get HEALTH_URL "$ORIGIN/healthz")
+
+gma_up() {
+    curl -fsS -o /dev/null --max-time 10 "$HEALTH_URL" 2>/dev/null
+}
+
+# Any answer at all counts (no -f): the question is "is there a route out".
+# -k because the content is thrown away and, with no RTC, a wrong clock fails
+# every certificate check: without it a frame whose clock is off would take
+# Ben's server being down for "no internet" and start rebooting. Three
+# different networks, then ICMP, so one blocked or filtered host is not enough.
+internet_up() {
+    curl -ksS -o /dev/null --max-time 8 https://1.1.1.1/ 2>/dev/null && return 0
+    curl -ksS -o /dev/null --max-time 8 https://dns.google/ 2>/dev/null && return 0
+    curl -ksS -o /dev/null --max-time 8 https://archive.raspberrypi.com/ 2>/dev/null && return 0
+    ping -c 1 -W 3 1.1.1.1 >/dev/null 2>&1 && return 0
+    ping -c 1 -W 3 8.8.8.8 >/dev/null 2>&1 && return 0
+    return 1
+}
+
+gateway_up() {
+    local gw
+    gw=$(ip -4 route show default 2>/dev/null | awk '/default/ { print $3; exit }')
+    [[ -n $gw ]] || return 1
+    ping -c 1 -W 2 "$gw" >/dev/null 2>&1
+}
+
+has_wifi() {
+    nmcli -t -f TYPE device 2>/dev/null | grep -qx wifi
+}
+
+# --- actions -----------------------------------------------------------------
+toggle_wifi() {
+    if ! has_wifi; then
+        gma_log "no Wi-Fi device; skipping the radio toggle"
+        return 0
+    fi
+    gma_log "toggling the Wi-Fi radio"
+    nmcli radio wifi off || true
+    sleep 5
+    nmcli radio wifi on || true
+}
+
+restart_nm() {
+    gma_log "restarting NetworkManager"
+    systemctl restart NetworkManager.service || gma_warn "NetworkManager restart failed"
+}
+
+reboot_allowed() {
+    local last=0 now
+    now=$(gma_now)
+    if [[ -r $LAST_REBOOT_FILE ]]; then
+        last=$(<"$LAST_REBOOT_FILE")
+        [[ $last =~ ^[0-9]+$ ]] || last=0
+    fi
+    # A stamp in the future means the clock went back (power cut, no RTC);
+    # the stamp is then meaningless, and the next one is written with this
+    # clock, so this allows at most one extra reboot, never a loop.
+    (( now < last || now - last >= REBOOT_MIN_GAP_S ))
+}
+
+do_reboot() {
+    gma_log "no internet for $(( ($(gma_now) - first_fail) / 60 )) min: rebooting"
+    gma_now >"$LAST_REBOOT_FILE"
+    sync
+    systemctl reboot
+}
+
+# --- commands ----------------------------------------------------------------
+case ${1-} in
+    --status)
+        load_state
+        if (( fail_count == 0 )); then
+            echo "no outage recorded"
+        else
+            echo "failed checks: $fail_count, offline since $(date -d "@$first_fail" '+%F %T')"
+            (( toggled_at )) && echo "radio toggled: $(date -d "@$toggled_at" '+%F %T')"
+            (( nm_restarted_at )) && echo "NetworkManager restarted: $(date -d "@$nm_restarted_at" '+%F %T')"
+        fi
+        if [[ -r $LAST_REBOOT_FILE ]]; then
+            echo "last watchdog reboot: $(date -d "@$(<"$LAST_REBOOT_FILE")" '+%F %T')"
+        fi
+        exit 0
+        ;;
+    --reset) clear_state; echo "outage state cleared"; exit 0 ;;
+    "") ;;
+    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+    *) gma_die "unknown option: $1 (try --help)" ;;
+esac
+
+load_state
+now=$(gma_now)
+
+# No RTC: after a power cut the clock can come back behind the saved times,
+# and every "minutes since" below would stay negative (no recovery step)
+# until real time caught up. Start the outage timers again instead.
+if (( fail_count > 0 )) && (( first_fail > now || cycle_start > now || toggled_at > now || nm_restarted_at > now )); then
+    gma_log "the clock moved backwards (power cut?): restarting the outage timers"
+    first_fail=$now
+    cycle_start=$now
+    toggled_at=0
+    nm_restarted_at=0
+fi
+
+if gma_up; then
+    if (( fail_count > 0 )); then
+        gma_log "gma.4mn.org answers again after $(( (now - first_fail) / 60 )) min"
+        clear_state
+    fi
+    if [[ -e /run/gma-netwatch.server-down ]]; then
+        gma_log "gma.4mn.org answers again"
+        rm -f /run/gma-netwatch.server-down
+    fi
+    # The kiosk started while the server was unreachable and had nothing
+    # cached, so it is sitting on an error page. Reload it now.
+    if [[ -e $RELOAD_MARKER ]]; then
+        gma_log "server reachable: restarting the kiosk that started offline"
+        rm -f "$RELOAD_MARKER"
+        systemctl try-restart "$GMA_KIOSK_UNIT" || true
+    fi
+    exit 0
+fi
+
+if internet_up; then
+    # Not the Pi's problem. Log once per outage, take no action.
+    if (( fail_count > 0 )); then
+        gma_log "internet is back but gma.4mn.org is not answering: Ben's server, nothing to do here"
+        clear_state
+    elif [[ ! -e /run/gma-netwatch.server-down ]]; then
+        gma_log "internet is up but gma.4mn.org is not answering: Ben's server, nothing to do here"
+    fi
+    : >/run/gma-netwatch.server-down
+    exit 0
+fi
+rm -f /run/gma-netwatch.server-down
+
+fail_count=$((fail_count + 1))
+if (( first_fail == 0 )); then
+    first_fail=$now
+    cycle_start=$now
+    if gateway_up; then
+        gma_log "no internet (the router answers, so the problem is upstream of it)"
+    else
+        gma_log "no internet and the router does not answer"
+    fi
+fi
+(( cycle_start )) || cycle_start=$first_fail
+offline_s=$((now - first_fail))
+cycle_s=$((now - cycle_start))
+
+if (( fail_count >= TOGGLE_AFTER_CHECKS && toggled_at < cycle_start )); then
+    toggle_wifi
+    toggled_at=$(gma_now)
+elif (( cycle_s >= RESTART_NM_AFTER_S && nm_restarted_at < cycle_start )); then
+    restart_nm
+    nm_restarted_at=$(gma_now)
+elif (( offline_s >= REBOOT_AFTER_S )) && reboot_allowed; then
+    save_state
+    do_reboot
+    exit 0
+elif (( cycle_s >= REPEAT_CYCLE_S )); then
+    # A reboot was not allowed (one in the last 6 h): start the cycle again.
+    gma_log "still offline after $((offline_s / 60)) min; reboot held (one in the last 6 h), repeating the radio and NetworkManager steps"
+    cycle_start=$now
+    toggle_wifi
+    toggled_at=$(gma_now)
+fi
+
+save_state

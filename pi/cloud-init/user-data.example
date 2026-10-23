@@ -1,0 +1,43 @@
+#cloud-config
+# Example cloud-init user-data for Grandma's frame (Raspberry Pi OS Lite 64-bit,
+# trixie). Raspberry Pi Imager 2.x writes user-data, network-config and
+# meta-data to the boot partition from its customisation screens; this file
+# shows the same settings so you can check what Imager wrote or hand-edit it.
+# (Imager 1.9.x cannot customise trixie images.)
+#
+# Put it on the FAT boot partition as "user-data" (no .example). Keep the
+# meta-data file Imager wrote. Never put the pairing URL in here: the boot
+# partition is readable by anyone holding the card. install.sh stores it.
+
+hostname: gma-frame
+manage_etc_hosts: true
+
+timezone: America/Chicago
+locale: en_US.UTF-8
+keyboard:
+  layout: us
+
+# Ben's admin account: SSH key only, no password at all. Passwordless sudo is
+# needed because there is no password to type (new trixie images turn
+# passwordless sudo off by default, so it is granted explicitly here).
+users:
+  - name: kiosk-admin
+    gecos: Ben (remote admin)
+    groups: [adm, sudo, systemd-journal, video, audio, input, render, netdev]
+    shell: /bin/bash
+    lock_passwd: true
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    ssh_authorized_keys:
+      - "ssh-ed25519 AAAA_REPLACE_WITH_BENS_PUBLIC_KEY ben@laptop"
+
+ssh_pwauth: false
+disable_root: true
+
+# rsync lets pi/remote/push-update.sh sync the kit (it falls back to tar).
+package_update: true
+packages:
+  - rsync
+
+runcmd:
+  # Imager's "Enable SSH" does the same; this makes the example self-contained.
+  - [systemctl, enable, --now, ssh]
