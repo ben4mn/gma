@@ -1,0 +1,29 @@
+# secrets: real values live in .env on the server, never in git (see .env.example)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+vapid*.json
+
+# runtime data (the database, uploads and renditions live in Docker volumes)
+data/
+media/
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+
+# dependencies and builds
+node_modules/
+dist/
+coverage/
+.cache/
+playwright-report/
+test-results/
+
+# tooling
+__pycache__/
+*.pyc
+.DS_Store
+*.log
