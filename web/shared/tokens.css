@@ -1,0 +1,257 @@
+/* Shared by the family PWA and Grandma's frame. Source: design/heirloom/tokens.css
+   (font URLs made absolute). Change the design file first, then copy it here. */
+/* Heirloom — the family photo album on Grandma's kitchen table.
+   Tokens: palette, type, spacing, radii, shadows. Every colour is a hex value so
+   contrast can be checked; README.md lists each ratio. Shared pieces (the paper,
+   the print, the Home button, the header) follow the tokens. */
+
+/* ---------- Fonts (self-hosted, SIL OFL; see fonts/OFL-*.txt) ---------- */
+@font-face {
+  font-family: "Fraunces";
+  font-style: normal;
+  font-weight: 300 800;
+  font-display: block;
+  src: url("/assets/fonts/fraunces-latin.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Fraunces";
+  font-style: italic;
+  font-weight: 300 800;
+  font-display: block;
+  src: url("/assets/fonts/fraunces-italic-latin.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Atkinson Hyperlegible Next";
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: block;
+  src: url("/assets/fonts/atkinson-next-latin.woff2") format("woff2");
+}
+
+:root {
+  /* ---------- Palette: day ---------- */
+  --paper:        #F5EEE2;  /* the tabletop: page background */
+  --paper-deep:   #EADFCD;  /* pressed paper, shadows under cards, the tab bar's rule */
+  --card:         #FFFDF8;  /* note cards and the white mat around every print */
+  --mat:          #FFFDF8;  /* print border */
+  --ink:          #2B2119;  /* main text: 13.6:1 on paper, 15.5:1 on card */
+  --ink-muted:    #57473A;  /* secondary text: 7.7:1 on paper, 8.7:1 on card */
+  --terracotta:   #8A3517;  /* primary actions; cream text on it 7.6:1 */
+  --terracotta-press: #6E2A12;
+  --terracotta-tint:  #F3DED3; /* selected-tab pill, the sent heart's halo */
+  --sage:         #3A5236;  /* Home, secondary actions; cream on it 8.2:1, as text on paper 7.5:1 */
+  --sage-press:   #2C3F29;
+  --sage-tint:    #E3E8D8;
+  --gold:         #B8862B;  /* decorative only: photo corners, rules, the night moon. Never text. */
+  --gold-soft:    #D9B877;  /* decorative rules on cards */
+  --cream:        #FFF8EC;  /* text on terracotta and sage */
+  --ochre:        #6B4F1D;  /* an avatar colour; cream on it 7.2:1 */
+  --slate:        #3D4A55;  /* an avatar colour; cream on it 8.6:1 */
+
+  /* shadows: warm, low, like a print lying on a table under a kitchen lamp */
+  --shadow-print: 0 1px 1px rgba(43, 33, 25, 0.10),
+                  0 4px 10px rgba(43, 33, 25, 0.10),
+                  0 18px 36px -14px rgba(60, 38, 20, 0.38);
+  --shadow-card:  0 1px 1px rgba(43, 33, 25, 0.08),
+                  0 3px 8px rgba(43, 33, 25, 0.08),
+                  0 12px 24px -12px rgba(60, 38, 20, 0.30);
+  --shadow-press: 0 1px 1px rgba(43, 33, 25, 0.10), 0 2px 4px rgba(43, 33, 25, 0.10);
+  --photo-filter: none;
+
+  /* ---------- Type ---------- */
+  --font-serif: "Fraunces", "Literata", Georgia, serif;          /* names, headings, captions, note cards */
+  --font-sans:  "Atkinson Hyperlegible Next", "Atkinson Hyperlegible", system-ui, sans-serif; /* labels, body */
+  --serif-soft: "SOFT" 60;  /* Fraunces' soft axis: rounder terminals, warmer */
+
+  /* Grandma (1280x800, arm's length) */
+  --g-display: 56px;  /* the clock */
+  --g-title:   46px;  /* names: "From Sarah", "Sent to Sarah" */
+  --g-heading: 38px;  /* "New for you" */
+  --g-card:    30px;  /* print-card titles, note-card messages */
+  --g-body:    30px;  /* captions */
+  --g-label:   28px;  /* button labels */
+  --g-meta:    26px;  /* "This morning", the date */
+  --g-small:   24px;  /* meta lines, the status pill (only Previous/Next labels go smaller, 22px) */
+
+  /* Family (390x844 phone) */
+  --f-title:   30px;
+  --f-name:    19px;
+  --f-body:    17px;
+  --f-button:  17px;
+  --f-meta:    15px;
+  --f-tab:     14px;
+
+  /* ---------- Space and shape ---------- */
+  --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
+  --space-5: 24px; --space-6: 32px; --space-7: 48px; --space-8: 64px;
+  --edge:    32px;            /* Grandma page margin */
+  --mat-hero: 18px;           /* white border on the big print */
+  --mat-small: 7px;           /* white border on small prints */
+  --radius-print: 3px;        /* prints are nearly square-cornered */
+  --radius-card: 8px;         /* note cards, print-cards */
+  --radius-button: 18px;      /* buttons */
+  --radius-pill: 999px;
+
+  /* ---------- Tap sizes ---------- */
+  --tap-grandma: 96px;        /* main actions; nothing on her screen is under 80 */
+  --tap-family:  48px;
+}
+
+/* ---------- Palette: night (Grandma's frame after dark) ----------
+   The same layout, so nothing moves; the paper goes to a warm dark brown, the
+   prints dim, the mat stops glowing white, and the slideshow pauses. */
+:root[data-state="night"] {
+  --paper:      #1E1712;
+  --paper-deep: #15100C;
+  --card:       #2A211A;   /* cream on it 13.0:1 */
+  --mat:        #3A2E24;
+  --ink:        #F3E8D6;   /* 14.6:1 on the night paper */
+  --ink-muted:  #D9C8B0;   /* 10.8:1 on night paper, 9.7:1 on night card */
+  --terracotta: #8A3517;
+  --terracotta-tint: #3B2418;
+  --sage:       #3A5236;
+  --sage-tint:  #26301F;
+  --gold:       #B8862B;
+  --gold-soft:  #6E5530;
+  --shadow-print: 0 1px 1px rgba(0, 0, 0, 0.4), 0 14px 30px -12px rgba(0, 0, 0, 0.7);
+  --shadow-card:  0 1px 1px rgba(0, 0, 0, 0.4), 0 10px 22px -12px rgba(0, 0, 0, 0.6);
+  --photo-filter: brightness(0.62) saturate(0.85) sepia(0.12);
+}
+
+/* =====================================================================
+   Shared pieces
+   ===================================================================== */
+*, *::before, *::after { box-sizing: border-box; }
+html {
+  background-color: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+body { margin: 0; }
+img { display: block; }
+button { font: inherit; color: inherit; border: 0; background: none; padding: 0; cursor: pointer; }
+a { color: inherit; text-decoration: none; }
+.serif { font-family: var(--font-serif); font-variation-settings: var(--serif-soft); }
+
+/* The paper: a faint grain and a lamp-lit centre, painted behind everything.
+   On a pseudo-element so text over plain paper is still measured as paper. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 80% 70% at 42% 38%, rgba(255, 252, 244, 0.55), rgba(255, 252, 244, 0) 70%),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.35  0 0 0 0 0.24  0 0 0 0 0.14  0 0 0 0.10 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+:root[data-state="night"] body::before {
+  background:
+    radial-gradient(ellipse 80% 70% at 42% 38%, rgba(70, 50, 34, 0.35), rgba(70, 50, 34, 0) 70%),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.25 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+/* A print: a photo with a white mat and a soft shadow, lying on the paper. */
+.print {
+  position: relative;
+  background: var(--mat);
+  padding: var(--mat-small);
+  border-radius: var(--radius-print);
+  box-shadow: var(--shadow-print);
+}
+.print img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: var(--photo-filter);
+  /* a hairline where the emulsion meets the mat */
+  outline: 1px solid rgba(43, 33, 25, 0.10);
+  outline-offset: -1px;
+}
+
+/* Photo corners: the little gold paper pockets an album holds its prints with.
+   Decorative only; used on the big print on Grandma's screens. */
+.corner { position: absolute; width: 46px; height: 46px; pointer-events: none; }
+.corner::before {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(135deg, #C99A45 0%, var(--gold) 55%, #9C6F22 100%);
+  clip-path: polygon(0 0, 100% 0, 0 100%);
+  filter: drop-shadow(0 1px 1px rgba(43,33,25,.25));
+}
+.corner.tl { top: -6px; left: -6px; }
+.corner.tr { top: -6px; right: -6px; transform: rotate(90deg); }
+.corner.br { bottom: -6px; right: -6px; transform: rotate(180deg); }
+.corner.bl { bottom: -6px; left: -6px; transform: rotate(270deg); }
+:root[data-state="night"] .corner::before { background: #6E5530; }
+
+/* ---------- Grandma's header: Home always top-left, the day always top-right ---------- */
+.topbar {
+  position: absolute;
+  left: var(--edge);
+  right: var(--edge);
+  top: 24px;
+  height: 96px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  z-index: 20;
+}
+.home-btn {
+  flex: none;
+  width: 184px;
+  height: 96px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  border-radius: var(--radius-button);
+  background: var(--sage);
+  color: var(--cream);
+  font-family: var(--font-sans);
+  font-size: var(--g-label);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  box-shadow: var(--shadow-card);
+}
+.home-btn svg { width: 40px; height: 40px; flex: none; }
+.home-btn:active { background: var(--sage-press); box-shadow: var(--shadow-press); }
+/* On Home itself it says "you're here": the same button, pressed into the paper. */
+.home-btn[aria-current="page"] {
+  background: var(--card);
+  color: var(--sage);
+  box-shadow: inset 0 0 0 3px var(--sage), var(--shadow-press);
+}
+:root[data-state="night"] .home-btn[aria-current="page"] {
+  color: var(--ink);
+  box-shadow: inset 0 0 0 3px #7E9A72, var(--shadow-press);
+}
+.clock {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  white-space: nowrap;
+}
+.clock-date {
+  font-family: var(--font-serif);
+  font-variation-settings: var(--serif-soft);
+  font-size: var(--g-meta);
+  line-height: 1.1;
+  font-weight: 450;
+  color: var(--ink-muted);
+}
+.clock-time {
+  font-family: var(--font-serif);
+  font-variation-settings: var(--serif-soft);
+  font-size: var(--g-display);
+  font-weight: 600;
+  line-height: 1.0;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 1ms !important; animation: none !important; }
+}

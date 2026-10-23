@@ -1,0 +1,22 @@
+{
+  "name": "gma-web",
+  "private": true,
+  "version": "0.1.0",
+  "description": "The family PWA and Grandma's frame for gma.4mn.org (no build step; vendored ESM)",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.js\"",
+    "vendor": "node vendor/update.js",
+    "icons": "node assets/icons/make-icons.js",
+    "e2e": "bash e2e/run.sh"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.58.0",
+    "@simplewebauthn/browser": "14.0.0",
+    "playwright": "1.58.0",
+    "tus-js-client": "4.3.1"
+  }
+}

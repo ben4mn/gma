@@ -1,0 +1,4 @@
+{
+  "tus-js-client": "4.3.1",
+  "@simplewebauthn/browser": "14.0.0"
+}

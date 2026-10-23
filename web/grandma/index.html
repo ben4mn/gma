@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en" data-theme="day">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1280, height=800, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#F5EEE2">
+<title>Grandma's photos</title>
+<link rel="preload" href="../assets/fonts/fraunces-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="../assets/fonts/atkinson-next-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="grandma.css">
+<script type="module" src="grandma.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <button class="home-btn" id="home-btn" type="button" data-home>
+    <span class="icon" aria-hidden="true"><svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19.5 20 7l15 12.5"/><path d="M9.5 16.5V34h21V16.5"/><path d="M17 34v-9h6v9"/></svg></span>
+    Home
+  </button>
+  <p class="status" id="status" role="status" hidden></p>
+  <div class="clock" aria-label="Today">
+    <span class="clock-date" id="clock-date"></span>
+    <span class="clock-time" id="clock-time"></span>
+  </div>
+</header>
+<div id="screen"></div>
+<div id="rest-layer"></div>
+</body>
+</html>
