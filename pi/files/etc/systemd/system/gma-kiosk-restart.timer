@@ -1,0 +1,10 @@
+[Unit]
+Description=gma nightly kiosk restart at 03:30
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+# A frame that was off at 03:30 has a fresh browser anyway.
+Persistent=false
+
+[Install]
+WantedBy=timers.target

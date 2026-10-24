@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1280, height=800, initial-scale=1">
+<title>A photo from Sarah · Heirloom</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  html, body { width: 1280px; height: 800px; overflow: hidden; }
+
+
+  /* ---------- the viewer: previous | print + Sarah's note | next ---------- */
+  .viewer {
+    position: absolute;
+    top: 144px; left: var(--edge); right: var(--edge); bottom: 32px;
+    display: grid;
+    grid-template-columns: 104px 1fr 104px;
+    column-gap: 24px;
+  }
+  .viewer-main {
+    display: grid;
+    grid-template-columns: 656px 1fr;
+    grid-template-rows: 448px 1fr;
+    column-gap: 30px;
+    row-gap: 24px;
+    min-width: 0;
+  }
+
+  .nav-arrow {
+    align-self: start;
+    margin-top: 124px;         /* centred on the print */
+    height: 200px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+    border-radius: var(--radius-button);
+    background: var(--card);
+    color: var(--ink);
+    box-shadow: var(--shadow-card);
+    font-size: 22px; font-weight: 700;
+  }
+  .nav-arrow svg { width: 44px; height: 44px; }
+  .nav-arrow:active { box-shadow: var(--shadow-press); transform: translateY(1px); }
+
+  .print--open { width: 656px; height: 448px; padding: 16px; }
+  .print--open .media { position: relative; width: 100%; height: 100%; }
+
+  /* Sarah's note, the same card the slideshow uses */
+  .note {
+    position: relative;
+    align-self: start;
+    margin-top: 22px;
+    background: var(--card);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+    padding: 30px 28px 32px;
+  }
+  .note::before {
+    content: ""; position: absolute; top: -14px; left: 50%; width: 112px; height: 30px;
+    transform: translateX(-50%) rotate(-3deg);
+    background: rgba(217, 184, 119, 0.55);
+    box-shadow: 0 1px 2px rgba(43,33,25,.12);
+  }
+  .note-from { margin: 0; font-size: var(--g-small); font-weight: 600; color: var(--ink-muted); }
+  .note-name {
+    margin: 2px 0 0;
+    font-family: var(--font-serif); font-variation-settings: var(--serif-soft);
+    font-size: 54px; font-weight: 600; line-height: 1.0; color: var(--ink);
+  }
+  .note-when { margin: 10px 0 0; font-size: var(--g-small); font-weight: 600; color: var(--ink-muted); }
+  .note-rule { display: block; width: 56px; height: 3px; margin: 20px 0 18px; background: var(--gold-soft); border-radius: 2px; }
+  .note-text {
+    margin: 0;
+    font-family: var(--font-serif); font-variation-settings: var(--serif-soft);
+    font-size: var(--g-body); line-height: 1.3; color: var(--ink);
+  }
+
+  /* ---------- reactions and Send a message ---------- */
+  .reactions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .reaction {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+    border-radius: var(--radius-button);
+    background: var(--card);
+    box-shadow: var(--shadow-card);
+    font-size: 26px; font-weight: 700; color: var(--ink);
+  }
+  .reaction img { width: 54px; height: 54px; }
+  .reaction:active { box-shadow: var(--shadow-press); transform: translateY(1px); }
+
+  .send-btn {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+    border-radius: var(--radius-button);
+    background: var(--terracotta);
+    color: var(--cream);
+    box-shadow: var(--shadow-card);
+    font-size: var(--g-label); font-weight: 700;
+  }
+  .send-btn svg { width: 46px; height: 46px; }
+  .send-btn:active { background: var(--terracotta-press); box-shadow: var(--shadow-press); }
+
+  /* ---------- video: a poster and one huge play button; nothing plays until tapped ---------- */
+  .video-only { display: none; }
+  :root[data-state="video"] span.video-only { display: inline; }
+  :root[data-state="video"] .play-big.video-only { display: flex; }
+  :root[data-state="video"] .photo-only { display: none; }
+  .play-big {
+    position: absolute; inset: 0;
+    flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+  }
+  .play-big .disc {
+    width: 176px; height: 176px; border-radius: 50%;
+    display: grid; place-items: center;
+    background: var(--terracotta); color: var(--cream);
+    box-shadow: 0 0 0 10px rgba(255, 253, 248, 0.92), 0 10px 30px rgba(20, 12, 6, 0.45);
+  }
+  .play-big .disc svg { width: 76px; height: 76px; margin-left: 10px; }
+  .play-big .plate {
+    padding: 10px 26px; border-radius: var(--radius-pill);
+    background: var(--card); color: var(--ink);
+    font-size: var(--g-label); font-weight: 700;
+    box-shadow: 0 4px 14px rgba(20, 12, 6, 0.35);
+  }
+  .play-big:active .disc { background: var(--terracotta-press); }
+
+  /* ---------- presets: eight note cards, plainly for Sarah only ---------- */
+  .presets { display: none; position: absolute; top: 144px; left: var(--edge); right: var(--edge); bottom: 32px; }
+  :root[data-state="presets"] .presets { display: block; }
+  :root[data-state="presets"] .viewer { display: none; }
+  .presets-head { display: flex; align-items: center; gap: 28px; height: 104px; }
+  .presets-head .print { width: 140px; height: 96px; padding: 7px; flex: none; }
+  .presets-title {
+    margin: 0;
+    font-family: var(--font-serif); font-variation-settings: var(--serif-soft);
+    font-size: var(--g-title); font-weight: 600; line-height: 1.05; color: var(--ink);
+  }
+  /* who it goes to, said plainly: a person mark in sage, the words in full ink */
+  .presets-sub {
+    display: flex; align-items: center; gap: 12px;
+    margin: 10px 0 0; font-size: var(--g-label); font-weight: 600; line-height: 1.2; color: var(--ink);
+  }
+  .presets-sub svg { flex: none; width: 32px; height: 32px; color: var(--sage); }
+  .presets-sub b { font-weight: 800; color: var(--sage); }
+  .preset-grid {
+    margin-top: 24px;
+    display: grid; grid-template-columns: repeat(4, 1fr); grid-auto-rows: 168px; gap: 18px 20px;
+  }
+  /* an index card: a terracotta rule near the top, a faint gold one below the words */
+  .preset {
+    position: relative;
+    display: flex; align-items: center; justify-content: center;
+    padding: 18px 18px 8px;
+    border-radius: 6px;
+    background: var(--card);
+    box-shadow: var(--shadow-card);
+    font-family: var(--font-serif); font-variation-settings: var(--serif-soft);
+    font-size: 38px; font-weight: 550; line-height: 1.1; color: var(--ink); text-align: center;
+  }
+  .preset::before { content: ""; position: absolute; left: 0; right: 0; top: 20px; height: 2px; background: rgba(138, 53, 23, 0.45); }
+  .preset::after  { content: ""; position: absolute; left: 22px; right: 22px; bottom: 22px; height: 2px; background: rgba(217, 184, 119, 0.5); }
+  .preset:active { box-shadow: var(--shadow-press); transform: translateY(1px); }
+  .presets-foot { margin-top: 26px; display: flex; align-items: center; gap: 28px; }
+  .back-btn {
+    height: 104px; padding: 0 36px 0 26px;
+    display: inline-flex; align-items: center; gap: 14px;
+    border-radius: var(--radius-button);
+    background: var(--card); color: var(--sage);
+    box-shadow: inset 0 0 0 3px var(--sage), var(--shadow-card);
+    font-size: var(--g-label); font-weight: 700;
+  }
+  .back-btn svg { width: 40px; height: 40px; }
+
+  /* ---------- sent: warm and brief. The photo she answered, her heart on its corner ---------- */
+  .sent { display: none; }
+  :root[data-state="sent"] .viewer { display: none; }
+  :root[data-state="sent"] .sent {
+    position: absolute; top: 144px; left: var(--edge); right: var(--edge); bottom: 32px;
+    display: grid; grid-template-columns: auto 470px; justify-content: center; align-items: center; gap: 104px;
+  }
+  .sent-print { width: 456px; height: 312px; padding: 16px; margin-top: -24px; }
+  /* what she sent, tucked on the print's corner: the emoji never without its word */
+  .sent-badge {
+    position: absolute; right: -40px; bottom: -40px;
+    height: 104px; padding: 0 34px 0 22px;
+    display: inline-flex; align-items: center; gap: 14px;
+    border-radius: var(--radius-pill);
+    background: var(--card);
+    box-shadow: inset 0 0 0 4px var(--terracotta-tint), var(--shadow-card);
+    font-size: 34px; font-weight: 700; color: var(--ink);
+  }
+  .sent-badge img { width: 62px; height: 62px; filter: none; outline: 0; }
+  .sent-note {
+    display: none;
+    position: absolute; right: -56px; bottom: -48px;
+    min-width: 250px; padding: 30px 28px 22px;
+    background: var(--card); border-radius: 6px; box-shadow: var(--shadow-card);
+    font-family: var(--font-serif); font-variation-settings: var(--serif-soft);
+    font-size: 38px; font-weight: 550; line-height: 1.1; color: var(--ink); text-align: center;
+  }
+  .sent-note::before { content: ""; position: absolute; left: 0; right: 0; top: 14px; height: 2px; background: rgba(138, 53, 23, 0.45); }
+  :root[data-said] .sent-badge { display: none; }
+  :root[data-said] .sent-note { display: block; }
+  .sent-check {
+    display: inline-flex; align-items: center; gap: 12px;
+    margin: 0 0 14px;
+    font-size: var(--g-meta); font-weight: 700; color: var(--sage);
+  }
+  .sent-check svg { width: 34px; height: 34px; }
+  .sent-title {
+    margin: 0;
+    font-family: var(--font-serif); font-variation-settings: var(--serif-soft);
+    font-size: 66px; font-weight: 600; line-height: 1.02; color: var(--ink);
+  }
+  .sent-sub { margin: 18px 0 36px; font-family: var(--font-serif); font-variation-settings: var(--serif-soft); font-size: 32px; line-height: 1.3; color: var(--ink); }
+  .ok-btn {
+    display: inline-grid; place-items: center;
+    width: 240px; height: 104px;
+    border-radius: var(--radius-button);
+    background: var(--sage); color: var(--cream);
+    box-shadow: var(--shadow-card);
+    font-size: 34px; font-weight: 700;
+  }
+  .ok-btn:active { background: var(--sage-press); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="home-btn" data-home href="home.html">
+    <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19.5 20 7l15 12.5"/><path d="M9.5 16.5V34h21V16.5"/><path d="M17 34v-9h6v9"/></svg>
+    Home
+  </a>
+  <div class="clock" aria-label="Today">
+    <span class="clock-date">Tuesday, October 21</span>
+    <span class="clock-time">10:42 am</span>
+  </div>
+</header>
+
+<!-- default, sent and video share this layout -->
+<main class="viewer">
+  <a class="nav-arrow" href="photo.html?state=video" aria-label="Previous photo">
+    <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M25 7 12 20l13 13"/></svg>
+    Previous
+  </a>
+
+  <div class="viewer-main">
+    <figure class="print print--open" style="margin:0">
+      <div class="media">
+        <img src="../assets/photos/p646.jpg" alt="Lily running through a sunlit field" style="object-position:50% 40%">
+        <button class="play-big video-only" type="button" aria-label="Play the video">
+          <span class="disc"><svg viewBox="0 0 40 40" fill="currentColor" aria-hidden="true"><path d="M8 4.5v31L35 20z"/></svg></span>
+          <span class="plate">Play video · 1 minute</span>
+        </button>
+      </div>
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner br"></i><i class="corner bl"></i>
+    </figure>
+
+    <aside class="note">
+      <p class="note-from"><span class="photo-only">A photo from</span><span class="video-only">A video from</span></p>
+      <p class="note-name">Sarah</p>
+      <p class="note-when"><span class="photo-only">This morning</span><span class="video-only">This morning</span></p>
+      <span class="note-rule" aria-hidden="true"></span>
+      <p class="note-text">Lily at the farm today. She wanted you to see her new boots!</p>
+    </aside>
+
+    <div class="reactions" role="group" aria-label="Send Sarah a feeling">
+      <button class="reaction" type="button" data-reaction="love"><img src="../assets/emoji/emoji_u2764.svg" alt=""><span>Love</span></button>
+      <button class="reaction" type="button" data-reaction="funny"><img src="../assets/emoji/emoji_u1f602.svg" alt=""><span>Funny</span></button>
+      <button class="reaction" type="button" data-reaction="wow"><img src="../assets/emoji/emoji_u1f62e.svg" alt=""><span>Wow</span></button>
+      <button class="reaction" type="button" data-reaction="thankful"><img src="../assets/emoji/emoji_u1f64f.svg" alt=""><span>Thankful</span></button>
+    </div>
+
+    <a class="send-btn" href="photo.html?state=presets">
+      <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 10h32a3 3 0 0 1 3 3v18a3 3 0 0 1-3 3H22l-9 7v-7H8a3 3 0 0 1-3-3V13a3 3 0 0 1 3-3Z"/><path d="M14 19h20M14 25h13"/></svg>
+      Send a message
+    </a>
+  </div>
+
+  <a class="nav-arrow" href="photo.html" aria-label="Next photo">
+    <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 7l13 13-13 13"/></svg>
+    Next
+  </a>
+</main>
+
+<!-- presets -->
+<section class="presets" aria-labelledby="presets-title">
+  <div class="presets-head">
+    <span class="print"><img src="../assets/photos/p646.jpg" alt="" style="object-position:50% 40%"></span>
+    <div>
+      <h1 class="presets-title" id="presets-title">Send Sarah a message</h1>
+      <p class="presets-sub"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" aria-hidden="true"><circle cx="16" cy="10.5" r="5.5"/><path d="M5.5 28a10.5 10.5 0 0 1 21 0"/></svg><span>It goes to <b>Sarah only</b>. One tap sends it.</span></p>
+    </div>
+  </div>
+  <div class="preset-grid">
+    <a class="preset" href="photo.html?state=sent&amp;said=Love%20you">Love you</a>
+    <a class="preset" href="photo.html?state=sent&amp;said=Call%20me">Call me</a>
+    <a class="preset" href="photo.html?state=sent&amp;said=Thank%20you">Thank you</a>
+    <a class="preset" href="photo.html?state=sent&amp;said=Miss%20you%20all">Miss you all</a>
+    <a class="preset" href="photo.html?state=sent&amp;said=So%20beautiful">So beautiful</a>
+    <a class="preset" href="photo.html?state=sent&amp;said=Made%20my%20day">Made my day</a>
+    <a class="preset" href="photo.html?state=sent&amp;said=Come%20visit%20soon">Come visit soon</a>
+    <a class="preset" href="photo.html?state=sent&amp;said=Proud%20of%20you">Proud of you</a>
+  </div>
+  <div class="presets-foot">
+    <a class="back-btn" href="photo.html">
+      <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 9 6 20l11 11"/><path d="M7 20h27"/></svg>
+      Back to the photo
+    </a>
+  </div>
+</section>
+
+<!-- sent -->
+<div class="sent" role="status" aria-live="polite">
+  <figure class="print sent-print" style="margin:0">
+    <img src="../assets/photos/p646.jpg" alt="Lily running through a sunlit field" style="object-position:50% 40%">
+    <span class="sent-badge"><img src="../assets/emoji/emoji_u2764.svg" alt=""><span class="sent-word">Love</span></span>
+    <span class="sent-note"></span>
+  </figure>
+  <div class="sent-words">
+    <p class="sent-check"><svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="20" cy="20" r="16"/><path d="m12.5 20.5 5 5 10-11"/></svg>Done</p>
+    <p class="sent-title">Sent to Sarah</p>
+    <p class="sent-sub">She’ll know you loved it.</p>
+    <a class="ok-btn" href="photo.html">OK</a>
+  </div>
+</div>
+
+<script>
+  // States: ?state=presets | sent | video. Taps move between them so the mock can be clicked through.
+  (function () {
+    var q = new URLSearchParams(location.search);
+    var state = q.get('state') || 'default';
+    document.documentElement.dataset.state = state;
+    if (state === 'sent') {
+      var said = q.get('said');
+      if (said) {
+        document.documentElement.dataset.said = said;
+        document.querySelector('.sent-note').textContent = said;
+        document.querySelector('.sent-sub').textContent = 'Your note is on its way to her.';
+      } else {
+        var r = q.get('r') || 'love';
+        var feel = { love: 'She’ll know you loved it.', funny: 'She’ll know it made you laugh.',
+                     wow: 'She’ll know it amazed you.', thankful: 'She’ll know you’re thankful.' };
+        var art = { love: '2764', funny: '1f602', wow: '1f62e', thankful: '1f64f' };
+        var word = { love: 'Love', funny: 'Funny', wow: 'Wow', thankful: 'Thankful' };
+        document.querySelector('.sent-word').textContent = word[r];
+        document.querySelector('.sent-sub').textContent = feel[r];
+        document.querySelector('.sent-badge img').src = '../assets/emoji/emoji_u' + art[r] + '.svg';
+      }
+    }
+    document.querySelectorAll('[data-reaction]').forEach(function (b) {
+      b.addEventListener('click', function () { location.search = '?state=sent&r=' + b.dataset.reaction; });
+    });
+  })();
+</script>
+</body>
+</html>

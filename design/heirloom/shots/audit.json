@@ -1,0 +1,62 @@
+{
+  "home": {
+    "issues": [],
+    "overImage": [],
+    "measured": 15,
+    "taps": 6
+  },
+  "home-offline": {
+    "issues": [],
+    "overImage": [],
+    "measured": 15,
+    "taps": 6
+  },
+  "home-night": {
+    "issues": [],
+    "overImage": [],
+    "measured": 15,
+    "taps": 6
+  },
+  "photo": {
+    "issues": [],
+    "overImage": [],
+    "measured": 14,
+    "taps": 8
+  },
+  "photo-presets": {
+    "issues": [],
+    "overImage": [],
+    "measured": 15,
+    "taps": 10
+  },
+  "photo-sent": {
+    "issues": [],
+    "overImage": [],
+    "measured": 8,
+    "taps": 2
+  },
+  "photo-video": {
+    "issues": [],
+    "overImage": [],
+    "measured": 15,
+    "taps": 9
+  },
+  "family": {
+    "issues": [],
+    "overImage": [],
+    "measured": 12,
+    "taps": 4
+  },
+  "family-grandma": {
+    "issues": [],
+    "overImage": [],
+    "measured": 29,
+    "taps": 4
+  },
+  "family-mine": {
+    "issues": [],
+    "overImage": [],
+    "measured": 13,
+    "taps": 4
+  }
+}

@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#F5EEE2">
+<title>Family · Heirloom</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  body { min-height: 100vh; }
+  .page {
+    padding: max(22px, env(safe-area-inset-top)) 18px calc(112px + env(safe-area-inset-bottom));
+  }
+
+  /* ---------- head ---------- */
+  .head { margin: 6px 2px 18px; }
+  .eyebrow {
+    display: flex; align-items: center; gap: 8px;
+    margin: 0 0 6px;
+    font-size: var(--f-meta); font-weight: 700; letter-spacing: 0.02em; color: var(--ink-muted);
+  }
+  .eyebrow .mark { width: 16px; height: 16px; }
+  .title {
+    margin: 0;
+    font-family: var(--font-serif); font-variation-settings: var(--serif-soft);
+    font-size: var(--f-title); font-weight: 600; line-height: 1.1; color: var(--ink);
+  }
+  .sub { margin: 6px 0 0; font-size: var(--f-body); line-height: 1.4; color: var(--ink-muted); }
+
+  .panel { display: none; }
+  :root[data-state="family"] .panel--family,
+  :root[data-state="grandma"] .panel--grandma,
+  :root[data-state="mine"] .panel--mine { display: block; }
+
+  /* ---------- the upload button: warm terracotta, always first ---------- */
+  .upload {
+    display: flex; align-items: center; justify-content: center; gap: 12px;
+    height: 60px; margin: 0 0 26px;
+    border-radius: 16px;
+    background: var(--terracotta); color: var(--cream);
+    box-shadow: var(--shadow-card);
+    font-size: var(--f-button); font-weight: 700;
+  }
+  .upload svg { width: 26px; height: 26px; }
+  .upload:active { background: var(--terracotta-press); box-shadow: var(--shadow-press); }
+
+  /* ---------- a post is a print: the photo, then the words on its mat ---------- */
+  .post { position: relative; margin: 0 0 30px; }
+  .post .print { padding: 10px 10px 0; }
+  .post .photo { position: relative; aspect-ratio: 4 / 3; }
+  .post .photo.tall { aspect-ratio: 4 / 5; }
+  .post-mat { padding: 14px 6px 16px; }
+  .byline { display: flex; align-items: center; gap: 10px; }
+  .avatar {
+    flex: none; width: 36px; height: 36px; border-radius: 50%;
+    display: grid; place-items: center;
+    color: var(--cream);
+    font-family: var(--font-serif); font-variation-settings: var(--serif-soft);
+    font-size: 18px; font-weight: 650;
+  }
+  .who {
+    margin: 0;
+    font-family: var(--font-serif); font-variation-settings: var(--serif-soft);
+    font-size: var(--f-name); font-weight: 600; line-height: 1.15; color: var(--ink);
+  }
+  .when { margin: 0 0 0 auto; font-size: var(--f-meta); font-weight: 600; color: var(--ink-muted); white-space: nowrap; }
+  .caption {
+    margin: 10px 0 0;
+    font-family: var(--font-serif); font-variation-settings: var(--serif-soft);
+    font-size: 18px; line-height: 1.4; color: var(--ink);
+  }
+
+  /* plates on photos are solid, so they read on any picture */
+  .plate {
+    position: absolute; right: 10px; bottom: 10px;
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 12px; border-radius: var(--radius-pill);
+    background: var(--card); color: var(--ink);
+    font-size: 14px; font-weight: 700;
+    box-shadow: 0 2px 6px rgba(20, 12, 6, 0.3);
+  }
+  .play {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: 72px; height: 72px; border-radius: 50%;
+    display: grid; place-items: center;
+    background: var(--terracotta); color: var(--cream);
+    box-shadow: 0 0 0 5px rgba(255, 253, 248, 0.92), 0 6px 18px rgba(20, 12, 6, 0.4);
+  }
+  .play svg { width: 30px; height: 30px; margin-left: 4px; }
+
+  /* Mike's three photos: one mat, laid out like a contact sheet, so all three show */
+  .photo.sheet {
+    display: grid; grid-template-columns: 2fr 1fr; grid-template-rows: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+  .photo.sheet img { min-height: 0; }
+  .photo.sheet img:first-child { grid-row: 1 / 3; }
+
+  /* Grandma's reactions on your posts (Mine) */
+  .from-gma {
+    margin: 14px 0 0; padding: 12px 0 0;
+    border-top: 1.5px dashed var(--gold-soft);
+  }
+  .from-gma-label { margin: 0 0 8px; font-family: var(--font-serif); font-variation-settings: var(--serif-soft); font-style: italic; font-size: 16px; font-weight: 500; color: var(--ink-muted); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 8px;
+    min-height: 40px; padding: 6px 14px 6px 10px;
+    border-radius: var(--radius-pill);
+    background: var(--paper); color: var(--ink);
+    font-size: 16px; font-weight: 700;
+  }
+  .chip img { width: 22px; height: 22px; }
+  .chip small { font-size: 14px; font-weight: 600; color: var(--ink-muted); }
+  .chip--note { font-family: var(--font-serif); font-variation-settings: var(--serif-soft); font-weight: 600; border-radius: 8px; }
+  .waiting { margin: 0; font-size: 15px; font-weight: 600; color: var(--ink-muted); }
+
+  /* ---------- Grandma's Feed ---------- */
+  .day {
+    display: flex; align-items: center; gap: 12px;
+    margin: 6px 2px 14px;
+    font-family: var(--font-serif); font-variation-settings: var(--serif-soft);
+    font-size: 20px; font-weight: 600; color: var(--ink);
+  }
+  .day::after { content: ""; flex: 1; height: 1.5px; background: var(--gold-soft); }
+  .gitem {
+    display: grid; grid-template-columns: 82px 1fr; gap: 14px;
+    margin: 0 0 14px; padding: 14px;
+    background: var(--card); border-radius: var(--radius-card); box-shadow: var(--shadow-card);
+  }
+  .gitem .print { width: 82px; height: 82px; padding: 5px; }
+  .gitem .print img { object-fit: cover; }
+  .g-what { display: flex; align-items: center; gap: 8px; margin: 2px 0 0; font-size: 17px; font-weight: 700; color: var(--ink); }
+  .g-what img { width: 26px; height: 26px; }
+  .g-what .lead { font-weight: 500; color: var(--ink-muted); }
+  .g-what--line { display: block; line-height: 1.3; }
+  .g-note {
+    position: relative; display: inline-block;
+    margin: 2px 0 0; padding: 14px 16px 10px;
+    background: var(--paper); border-radius: 6px;
+    font-family: var(--font-serif); font-variation-settings: var(--serif-soft);
+    font-size: 20px; font-weight: 600; color: var(--ink);
+  }
+  .g-note::before { content: ""; position: absolute; left: 0; right: 0; top: 6px; height: 1.5px; background: rgba(138, 53, 23, 0.45); }
+  .g-about { margin: 8px 0 0; font-size: 15px; line-height: 1.35; color: var(--ink-muted); }
+  .g-about q { color: var(--ink); font-weight: 600; }
+  .g-meta { display: flex; align-items: center; gap: 10px; margin: 10px 0 0; }
+  .to {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: var(--radius-pill);
+    background: var(--sage-tint); color: var(--sage);
+    font-size: 14px; font-weight: 700;
+  }
+  .to svg { width: 14px; height: 14px; }
+  .to--all { background: var(--terracotta-tint); color: var(--terracotta-press); }
+  .g-time { font-size: 14px; font-weight: 600; color: var(--ink-muted); }
+
+  .voice-note { grid-template-columns: 1fr; }
+  .vn-row { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+  .vn-play {
+    flex: none; width: 52px; height: 52px; border-radius: 50%;
+    display: grid; place-items: center;
+    background: var(--terracotta); color: var(--cream);
+  }
+  .vn-play svg { width: 22px; height: 22px; margin-left: 3px; }
+  .wave { flex: 1; display: flex; align-items: center; gap: 3px; height: 34px; }
+  .wave i { flex: 1; background: var(--ink-muted); border-radius: 2px; opacity: .55; }
+  .vn-len { font-size: 15px; font-weight: 700; color: var(--ink); }
+  .vn-head { display: flex; align-items: center; gap: 12px; }
+  .vn-head .print { width: 64px; height: 52px; padding: 4px; flex: none; }
+  .footnote {
+    display: flex; gap: 10px; align-items: flex-start;
+    margin: 22px 4px 0; font-size: 15px; line-height: 1.45; color: var(--ink-muted);
+  }
+  .footnote svg { flex: none; width: 20px; height: 20px; margin-top: 1px; }
+
+  /* ---------- the tab bar ---------- */
+  .tabs {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    padding: 8px 8px calc(10px + env(safe-area-inset-bottom));
+    background: var(--card);
+    border-top: 1px solid var(--paper-deep);
+    box-shadow: 0 -6px 18px -10px rgba(60, 38, 20, 0.25);
+  }
+  .tab {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+    min-height: 60px;
+    border-radius: 14px;
+    color: var(--ink-muted);
+    font-size: var(--f-tab); font-weight: 700;
+  }
+  .tab .ic { width: 58px; height: 32px; display: grid; place-items: center; border-radius: var(--radius-pill); }
+  .tab svg { width: 26px; height: 26px; }
+  .tab[aria-current="page"] { color: var(--terracotta); }
+  .tab[aria-current="page"] .ic { background: var(--terracotta-tint); }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ================= Family ================= -->
+  <section class="panel panel--family" aria-labelledby="t-family">
+    <header class="head">
+      <p class="eyebrow"><svg class="mark" viewBox="0 0 16 16" aria-hidden="true"><path d="M0 0h16L0 16z" fill="#B8862B"/></svg>On Grandma’s frame</p>
+      <h1 class="title" id="t-family">Family</h1>
+      <p class="sub">Everyone’s photos and videos, newest first.</p>
+    </header>
+
+    <a class="upload" href="#upload">
+      <svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9.5a2 2 0 0 1 2-2h3l2-3h6l2 3h3a2 2 0 0 1 2 2V21a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/><path d="M14 11.5v7M10.5 15h7"/></svg>
+      Share photos or a video
+    </a>
+
+    <article class="post">
+      <div class="print">
+        <div class="photo"><img src="../assets/photos/p837.jpg" alt="A bulldog named Biscuit" style="object-position:60% 40%"></div>
+        <div class="post-mat">
+          <div class="byline"><span class="avatar" style="background:var(--ochre)">L</span><p class="who">Lily</p><p class="when">9:58 am</p></div>
+          <p class="caption">Meet Biscuit! He snores.</p>
+        </div>
+      </div>
+    </article>
+
+    <article class="post">
+      <div class="print">
+        <div class="photo">
+          <img src="../assets/photos/p646.jpg" alt="Video poster: Lily running in a field" style="object-position:50% 40%">
+          <span class="play" aria-hidden="true"><svg viewBox="0 0 20 20" fill="currentColor"><path d="M4 2.5v15l13-7.5z"/></svg></span>
+          <span class="plate">Video · 1:02</span>
+        </div>
+        <div class="post-mat">
+          <div class="byline"><span class="avatar" style="background:var(--terracotta)">S</span><p class="who">Sarah</p><p class="when">8:12 am</p></div>
+          <p class="caption">Lily at the farm today. She wanted you to see her new boots!</p>
+        </div>
+      </div>
+    </article>
+
+    <article class="post">
+      <div class="print">
+        <div class="photo sheet">
+          <img src="../assets/photos/p1015.jpg" alt="A blue fjord between cliffs">
+          <img src="../assets/photos/p174.jpg" alt="Hot-air balloons over a valley" style="object-position:52% 50%">
+          <img src="../assets/photos/p129.jpg" alt="Two people on a bench by the bay" style="object-position:50% 70%">
+        </div>
+        <div class="post-mat">
+          <div class="byline"><span class="avatar" style="background:var(--sage)">M</span><p class="who">Mike</p><p class="when">Yesterday</p></div>
+          <p class="caption">Home from the trip. The fjord, the balloons, and our old bench.</p>
+        </div>
+      </div>
+    </article>
+
+    <article class="post">
+      <div class="print">
+        <div class="photo tall"><img src="../assets/photos/p1003.jpg" alt="A young deer in autumn woods" style="object-position:50% 70%"></div>
+        <div class="post-mat">
+          <div class="byline"><span class="avatar" style="background:var(--slate)">C</span><p class="who">Aunt Carol</p><p class="when">Sunday</p></div>
+          <p class="caption">A little visitor in the woods behind my house.</p>
+        </div>
+      </div>
+    </article>
+  </section>
+
+  <!-- ================= Grandma's Feed ================= -->
+  <section class="panel panel--grandma" aria-labelledby="t-grandma">
+    <header class="head">
+      <p class="eyebrow"><svg class="mark" viewBox="0 0 16 16" aria-hidden="true"><path d="M0 0h16L0 16z" fill="#B8862B"/></svg>From her frame</p>
+      <h1 class="title" id="t-grandma">Grandma’s Feed</h1>
+      <p class="sub">What Grandma sent you and the whole family, newest first.</p>
+    </header>
+
+    <h2 class="day">Today</h2>
+
+    <article class="gitem">
+      <span class="print"><img src="../assets/photos/p646.jpg" alt="" style="object-position:50% 40%"></span>
+      <div>
+        <p class="g-what"><span class="lead">Grandma sent</span><img src="../assets/emoji/emoji_u2764.svg" alt=""><b>Love</b></p>
+        <p class="g-about">on your video <q>Lily at the farm today</q></p>
+        <p class="g-meta"><span class="to"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="5" r="3"/><path d="M2.5 14.5a5.5 5.5 0 0 1 11 0"/></svg>To you</span><span class="g-time">10:42 am</span></p>
+      </div>
+    </article>
+
+    <article class="gitem voice-note">
+      <div class="vn-head">
+        <span class="print"><img src="../assets/photos/p815.jpg" alt=""></span>
+        <div>
+          <p class="g-what g-what--line" style="margin:0"><span class="lead">Grandma sent</span> <b>a voice message</b></p>
+          <p class="g-about" style="margin:2px 0 0">to the whole family</p>
+        </div>
+      </div>
+      <div class="vn-row">
+        <a class="vn-play" href="#play" aria-label="Play Grandma’s voice message"><svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M4 2.5v15l13-7.5z"/></svg></a>
+        <span class="wave" aria-hidden="true">
+          <i style="height:30%"></i><i style="height:55%"></i><i style="height:80%"></i><i style="height:45%"></i><i style="height:65%"></i><i style="height:95%"></i><i style="height:60%"></i><i style="height:35%"></i><i style="height:70%"></i><i style="height:50%"></i><i style="height:85%"></i><i style="height:40%"></i><i style="height:60%"></i><i style="height:30%"></i><i style="height:75%"></i><i style="height:55%"></i><i style="height:35%"></i><i style="height:65%"></i><i style="height:45%"></i><i style="height:25%"></i><i style="height:50%"></i><i style="height:30%"></i>
+        </span>
+        <span class="vn-len">0:31</span>
+      </div>
+      <p class="g-meta"><span class="to to--all"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="5.5" cy="5.5" r="2.5"/><circle cx="11" cy="5.5" r="2.5"/><path d="M1 14a4.5 4.5 0 0 1 9 0M7.5 14a4.5 4.5 0 0 1 7.5-3.4"/></svg>To everyone</span><span class="g-time">9:20 am</span></p>
+    </article>
+
+    <h2 class="day">Yesterday</h2>
+
+    <article class="gitem">
+      <span class="print"><img src="../assets/photos/p1010.jpg" alt=""></span>
+      <div>
+        <p class="g-note">Made my day</p>
+        <p class="g-about">on your photo <q>Bedtime story with Lily</q></p>
+        <p class="g-meta"><span class="to"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="5" r="3"/><path d="M2.5 14.5a5.5 5.5 0 0 1 11 0"/></svg>To you</span><span class="g-time">7:10 pm</span></p>
+      </div>
+    </article>
+
+    <article class="gitem">
+      <span class="print"><img src="../assets/photos/p1010.jpg" alt=""></span>
+      <div>
+        <p class="g-what"><span class="lead">Grandma sent</span><img src="../assets/emoji/emoji_u1f64f.svg" alt=""><b>Thankful</b></p>
+        <p class="g-about">on your photo <q>Bedtime story with Lily</q></p>
+        <p class="g-meta"><span class="to"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="5" r="3"/><path d="M2.5 14.5a5.5 5.5 0 0 1 11 0"/></svg>To you</span><span class="g-time">7:09 pm</span></p>
+      </div>
+    </article>
+
+    <h2 class="day">Sunday</h2>
+
+    <article class="gitem">
+      <span class="print"><img src="../assets/photos/p152.jpg" alt=""></span>
+      <div>
+        <p class="g-what"><span class="lead">Grandma sent</span><img src="../assets/emoji/emoji_u1f62e.svg" alt=""><b>Wow</b></p>
+        <p class="g-about">on your photo <q>Your petunias, still blooming</q></p>
+        <p class="g-meta"><span class="to"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="5" r="3"/><path d="M2.5 14.5a5.5 5.5 0 0 1 11 0"/></svg>To you</span><span class="g-time">4:15 pm</span></p>
+      </div>
+    </article>
+
+    <p class="footnote">
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="9" width="12" height="8.5" rx="2"/><path d="M6.5 9V6.5a3.5 3.5 0 0 1 7 0V9"/></svg>
+      You see what Grandma sends to you and to everyone. Her notes to others stay between them.
+    </p>
+  </section>
+
+  <!-- ================= Mine ================= -->
+  <section class="panel panel--mine" aria-labelledby="t-mine">
+    <header class="head">
+      <p class="eyebrow"><svg class="mark" viewBox="0 0 16 16" aria-hidden="true"><path d="M0 0h16L0 16z" fill="#B8862B"/></svg>Shared by you, Sarah</p>
+      <h1 class="title" id="t-mine">Mine</h1>
+      <p class="sub">What you shared, and what Grandma sent back.</p>
+    </header>
+
+    <a class="upload" href="#upload">
+      <svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9.5a2 2 0 0 1 2-2h3l2-3h6l2 3h3a2 2 0 0 1 2 2V21a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/><path d="M14 11.5v7M10.5 15h7"/></svg>
+      Share photos or a video
+    </a>
+
+    <article class="post">
+      <div class="print">
+        <div class="photo">
+          <img src="../assets/photos/p646.jpg" alt="Video poster: Lily running in a field" style="object-position:50% 40%">
+          <span class="play" aria-hidden="true"><svg viewBox="0 0 20 20" fill="currentColor"><path d="M4 2.5v15l13-7.5z"/></svg></span>
+          <span class="plate">Video · 1:02</span>
+        </div>
+        <div class="post-mat">
+          <div class="byline"><p class="who" style="font-size:17px">Lily at the farm today</p><p class="when">8:12 am</p></div>
+          <div class="from-gma">
+            <p class="from-gma-label">From Grandma</p>
+            <div class="chips">
+              <span class="chip"><img src="../assets/emoji/emoji_u2764.svg" alt="">Love <small>10:42 am</small></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <article class="post">
+      <div class="print">
+        <div class="photo"><img src="../assets/photos/p1010.jpg" alt="Reading a book in bed"></div>
+        <div class="post-mat">
+          <div class="byline"><p class="who" style="font-size:17px">Bedtime story with Lily</p><p class="when">Yesterday</p></div>
+          <div class="from-gma">
+            <p class="from-gma-label">From Grandma</p>
+            <div class="chips">
+              <span class="chip"><img src="../assets/emoji/emoji_u1f64f.svg" alt="">Thankful</span>
+              <span class="chip chip--note">“Made my day”</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <article class="post">
+      <div class="print">
+        <div class="photo"><img src="../assets/photos/p152.jpg" alt="Garden flowers"></div>
+        <div class="post-mat">
+          <div class="byline"><p class="who" style="font-size:17px">Your petunias, still blooming</p><p class="when">Sunday</p></div>
+          <div class="from-gma">
+            <p class="from-gma-label">From Grandma</p>
+            <div class="chips">
+              <span class="chip"><img src="../assets/emoji/emoji_u1f62e.svg" alt="">Wow</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </article>
+  </section>
+</div>
+
+<nav class="tabs" aria-label="Sections">
+  <a class="tab" href="family.html" data-tab="family">
+    <span class="ic"><svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="9" r="3.5"/><circle cx="19" cy="9" r="3.5"/><path d="M2.5 23a6.5 6.5 0 0 1 13 0M14 18.2A6.5 6.5 0 0 1 25.5 23"/></svg></span>
+    Family
+  </a>
+  <a class="tab" href="family.html?tab=grandma" data-tab="grandma">
+    <span class="ic"><svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4.5h18a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2h-8l-5.5 4.5V20H5a2 2 0 0 1-2-2V6.5a2 2 0 0 1 2-2Z"/><path d="M14 16s-4.5-2.6-4.5-5.4A2.3 2.3 0 0 1 14 9.4a2.3 2.3 0 0 1 4.5 1.2C18.5 13.4 14 16 14 16Z"/></svg></span>
+    Grandma’s Feed
+  </a>
+  <a class="tab" href="family.html?tab=mine" data-tab="mine">
+    <span class="ic"><svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="21" height="18" rx="2"/><circle cx="10" cy="11" r="2.2"/><path d="m4 20.5 6-5.5 4.5 4 3.5-3 6 5"/></svg></span>
+    Mine
+  </a>
+</nav>
+
+<script>
+  // ?tab=grandma | mine (default: family)
+  (function () {
+    var tab = new URLSearchParams(location.search).get('tab') || 'family';
+    if (!/^(family|grandma|mine)$/.test(tab)) tab = 'family';
+    document.documentElement.dataset.state = tab;
+    document.querySelector('[data-tab="' + tab + '"]').setAttribute('aria-current', 'page');
+  })();
+</script>
+</body>
+</html>

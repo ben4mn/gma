@@ -1,0 +1,57 @@
+# Grandma's frame: Chromium full screen in cage on tty1, as the kiosk user,
+# inside a real logind session (PAMName) so XDG_RUNTIME_DIR and the PipeWire
+# user services exist. Pattern: cage's wiki + Raspberry Pi's rpi-image-gen
+# multi-user-kiosk example. Installed by pi/install.sh.
+[Unit]
+Description=gma kiosk (cage + Chromium) on tty1
+Documentation=file:///usr/local/share/doc/gma-kiosk/README.md
+After=systemd-user-sessions.service plymouth-quit-wait.service
+Wants=dbus.socket systemd-logind.service
+After=dbus.socket systemd-logind.service
+# cage's libseat tries seatd first and falls back to logind; start after seatd
+# so the same backend is chosen on every boot, not whichever won the race.
+After=seatd.service
+# Wait for the network and a real clock (no RTC on a Pi 4: TLS fails on a stale
+# clock). Both waits are bounded: NetworkManager-wait-online gives up after
+# 60 s and install.sh caps systemd-time-wait-sync at 60 s, so an offline boot
+# still reaches the saved photos.
+Wants=network-online.target
+After=network-online.target time-sync.target
+# We log in automatically, so take tty1 from getty.
+Conflicts=getty@tty1.service
+After=getty@tty1.service
+ConditionPathExists=/dev/tty1
+# Never give up on a crash-looping browser (default: 5 starts in 10 s, then failed).
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=kiosk
+PAMName=gma-kiosk
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+StandardInput=tty-fail
+StandardOutput=journal
+StandardError=journal
+UtmpIdentifier=tty1
+UtmpMode=user
+Environment=XDG_SESSION_TYPE=wayland
+# /var/lib/gma-kiosk/profile (kiosk:kiosk 0700) survives reboots: the service
+# worker's saved photos, the outbox and the device cookie live there. Deleting
+# it is a safe reset: the pairing URL pairs the frame again at the next start.
+StateDirectory=gma-kiosk/profile
+StateDirectoryMode=0700
+# /run/gma-kiosk: the "reload when online" marker for gma-netwatch.
+RuntimeDirectory=gma-kiosk
+RuntimeDirectoryMode=0755
+# -d: no client-side decorations. -s: allow Ctrl+Alt+F2 for an on-site
+# keyboard (Grandma has none, so she cannot switch away).
+ExecStart=/usr/bin/cage -d -s -- /usr/local/bin/gma-chromium
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

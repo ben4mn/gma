@@ -1,0 +1,6 @@
+[Unit]
+Description=gma nightly kiosk restart (clears Chromium memory growth)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl try-restart gma-kiosk.service

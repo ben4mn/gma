@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#FFFFFF">
+<title>Family · Front Porch</title>
+<script>
+  // Tabs: default = Family · ?tab=grandma · ?tab=mine
+  (function () {
+    var t = new URLSearchParams(location.search).get('tab');
+    t = (t === 'grandma' || t === 'mine') ? t : 'family';
+    document.documentElement.dataset.state = t;
+  })();
+</script>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: var(--font); font-size: var(--f-body); line-height: 1.4;
+    -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent;
+  }
+  img { display: block; }
+  button { font: inherit; color: inherit; margin: 0; }
+  a { color: inherit; text-decoration: none; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  p { margin: 0; }
+  .icon { width: 1em; height: 1em; flex: none; fill: none; stroke: currentColor;
+          stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round; }
+
+  .pane { display: none; padding-bottom: 112px; }
+  [data-state="family"] #family, [data-state="grandma"] #grandma, [data-state="mine"] #mine { display: block; }
+
+  /* ---- Header -------------------------------------------------------- */
+  .head { padding: calc(14px + env(safe-area-inset-top)) 18px 6px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-size: var(--f-meta); font-weight: 800; color: var(--ink-2); }
+  .brand .mark {
+    width: 30px; height: 30px; border-radius: 9px; background: var(--primary); color: #fff;
+    display: grid; place-items: center; border: 2px solid var(--ink);
+  }
+  .brand .mark .icon { font-size: 18px; stroke-width: 3.4; }
+  /* who you are, top right: the app is yours, not a website */
+  .me {
+    margin-left: auto; width: 44px; height: 44px; border-radius: 50%;
+    display: grid; place-items: center; background: var(--primary-soft); color: var(--ink);
+    border: var(--f-line) solid var(--ink); font-size: 18px; font-weight: 800;
+  }
+  h1 { font-size: var(--f-title); font-weight: 800; line-height: 1.05; margin: 10px 0 0; letter-spacing: -0.01em; }
+  .lede { font-size: var(--f-meta); font-weight: 600; color: var(--ink-2); margin-top: 6px; line-height: 1.35; }
+
+  /* The one big blue button: share something with Grandma and everyone. */
+  .upload {
+    display: flex; align-items: center; justify-content: center; gap: 12px;
+    width: 100%; height: 64px; margin-top: 14px;
+    background: var(--primary); color: #fff; font-size: 19px; font-weight: 800;
+    border: var(--f-line) solid var(--ink); border-radius: 18px;
+    box-shadow: 0 var(--f-lip) 0 var(--ink); cursor: pointer;
+  }
+  .upload .icon { font-size: 30px; stroke-width: 3.4; }
+  .upload:active { transform: translateY(var(--f-lip)); box-shadow: none; }
+
+  .day { width: max-content; font-size: var(--f-meta); font-weight: 800; color: var(--ink-2); margin: 30px 2px 10px; letter-spacing: 0.01em; line-height: 1.3; }
+  .list { padding: 0 16px; }
+
+  /* ---- Chunky cards (no lip: only things you press have one) ------------ */
+  .card { border: var(--f-line) solid var(--ink); border-radius: var(--r-md); overflow: hidden; background: var(--bg); margin-bottom: 18px; }
+  .card-head { display: flex; align-items: center; gap: 12px; padding: 10px 14px; }
+  .avatar {
+    width: 44px; height: 44px; flex: none; border-radius: 50%;
+    background: var(--surface); border: var(--f-line) solid var(--ink);
+    display: grid; place-items: center; font-size: 18px; font-weight: 800;
+  }
+  .name { font-size: var(--f-heading); font-weight: 800; line-height: 1.1; }
+  .when { font-size: var(--f-meta); font-weight: 600; color: var(--ink-2); line-height: 1.2; margin-top: 2px; }
+  .media { position: relative; display: block; background: var(--ink); }
+  .card-head + .media { border-top: var(--f-line) solid var(--ink); }
+  .media { border-bottom: var(--f-line) solid var(--ink); }
+  .media > img { width: 100%; height: 200px; object-fit: cover; }
+  .play {
+    position: absolute; left: 50%; top: 50%; width: 68px; height: 68px; margin: -34px 0 0 -34px;
+    border-radius: 50%; background: var(--primary); color: #fff; border: 3px solid #fff;
+    display: grid; place-items: center; box-shadow: 0 0 0 3px var(--ink);
+  }
+  .play .icon { font-size: 30px; margin-left: 4px; }
+  .len {
+    position: absolute; right: 10px; bottom: 10px; background: #fff; color: var(--ink);
+    font-size: 14px; font-weight: 800; padding: 3px 10px; border-radius: 999px; border: 2px solid var(--ink);
+  }
+  .trio { display: grid; grid-template-columns: 2fr 1fr; grid-template-rows: 1fr 1fr; gap: 3px; height: 203px; }
+  .trio img { width: 100%; height: 100%; object-fit: cover; }
+  .trio img:first-child { grid-row: span 2; }
+  .caption { padding: 10px 16px 2px; font-size: var(--f-body); font-weight: 500; line-height: 1.35; }
+  .gma {
+    display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px 10px;
+    margin: 8px 14px 12px; padding: 8px 10px; background: var(--surface); border-radius: 14px;
+    font-size: var(--f-meta); font-weight: 800; min-height: 52px;
+  }
+  .gma .acts { display: flex; flex-wrap: wrap; gap: 6px; }
+  .gma .t { color: var(--ink-2); font-weight: 600; }
+  .quiet { grid-column: 1 / -1; color: var(--ink-2); font-weight: 600; }
+
+  /* Grandma's reactions, as the same solid tiles she taps, in miniature. */
+  .chip {
+    display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 13px 0 4px;
+    border-radius: 999px; border: 2px solid var(--ink); font-size: var(--f-meta); font-weight: 800; white-space: nowrap;
+  }
+  .chip .e { width: 28px; height: 28px; border-radius: 50%; background: #fff; display: grid; place-items: center; border: 2px solid var(--ink); }
+  .chip .e img { width: 18px; height: 18px; }
+  .chip.love { background: var(--love); color: var(--love-ink); }
+  .chip.funny { background: var(--funny); color: var(--funny-ink); }
+  .chip.wow { background: var(--wow); color: var(--wow-ink); }
+  .chip.thankful { background: var(--thankful); color: var(--thankful-ink); }
+  /* Her preset messages: a speech bubble in the send colour. */
+  .bubble {
+    display: inline-flex; align-items: center; font-size: 19px; font-weight: 800; line-height: 1.15;
+    padding: 7px 14px 8px; border-radius: 16px 16px 16px 4px; background: var(--primary); color: #fff; white-space: nowrap;
+  }
+  .bubble.sm { font-size: var(--f-meta); padding: 7px 12px; min-height: 36px; }
+
+  /* ---- Grandma's Feed -------------------------------------------------- */
+  .ev {
+    display: grid; grid-template-columns: 76px 1fr; gap: 14px; align-items: start;
+    border: var(--f-line) solid var(--ink); border-radius: var(--r-md); padding: 12px; margin-bottom: 14px;
+  }
+  .ev-thumb { width: 76px; height: 76px; object-fit: cover; border-radius: 12px; border: var(--f-line) solid var(--ink); }
+  .ev-top { display: flex; align-items: center; gap: 10px; min-height: 36px; }
+  .ev-time { margin-left: auto; font-size: var(--f-meta); font-weight: 600; color: var(--ink-2); white-space: nowrap; }
+  .ev-to { display: flex; align-items: center; gap: 6px; font-size: var(--f-label); font-weight: 500; margin-top: 8px; line-height: 1.2; }
+  .ev-to .icon { font-size: 18px; color: var(--primary-ink); stroke-width: 3.6; }
+  .ev-to b { font-weight: 800; }
+  .ev-about { font-size: var(--f-meta); font-weight: 500; color: var(--ink-2); margin-top: 4px; line-height: 1.3; }
+
+  /* Her voice message to everyone: the family photo she said it on, then a plain audio player
+     (a waveform and a time, so it never reads as a video). Nothing plays until you tap. */
+  .ev.voice { background: var(--primary-soft); }
+  .vtag { display: inline-flex; align-items: center; gap: 6px; font-size: var(--f-label); font-weight: 800; }
+  .vtag .icon { font-size: 22px; color: var(--primary-ink); }
+  .player {
+    grid-column: 1 / -1; display: flex; align-items: center; gap: 12px;
+    background: var(--bg); border: var(--f-line) solid var(--ink); border-radius: 999px;
+    padding: 5px 16px 5px 5px;
+  }
+  .vplay {
+    width: 58px; height: 58px; flex: none; border-radius: 50%; background: var(--primary); color: #fff;
+    border: var(--f-line) solid var(--ink); display: grid; place-items: center; cursor: pointer; padding: 0;
+  }
+  .vplay .icon { font-size: 26px; margin-left: 4px; }
+  .vplay:active { transform: translateY(2px); }
+  .wave { flex: 1; min-width: 0; height: 26px; fill: var(--ink-2); }
+  .dur { font-size: var(--f-meta); font-weight: 800; font-variant-numeric: tabular-nums; }
+  /* What she said, in words, for the relative reading this on a bus. */
+  .said {
+    grid-column: 1 / -1; margin: 0; padding: 2px 4px 0 14px; border-left: 4px solid var(--primary);
+    font-size: var(--f-body); font-weight: 600; line-height: 1.35; color: var(--ink);
+  }
+
+  /* ---- Mine: your uploads, Grandma's answer on each ------------------- */
+  .mine-meta { padding: 10px 16px 0; }
+  .mine-cap { font-size: var(--f-body); font-weight: 700; line-height: 1.3; }
+  .mine-when { font-size: var(--f-meta); font-weight: 600; color: var(--ink-2); margin-top: 2px; line-height: 1.3; }
+
+  /* ---- Tab bar: icons + words, bold and unmistakable --------------------- */
+  .tabs {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
+    display: grid; grid-template-columns: 1fr 1.4fr 1fr; gap: 6px;
+    padding: 10px 10px calc(12px + env(safe-area-inset-bottom)); background: var(--bg);
+    border-top: var(--f-line) solid var(--ink);
+  }
+  .tab {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+    height: 62px; border-radius: 16px; font-size: var(--f-tab); font-weight: 800; line-height: 1.1;
+    border: var(--f-line) solid transparent;
+  }
+  .tab .icon { font-size: 28px; }
+  .tab[aria-current="page"] { background: var(--primary); color: #fff; border-color: var(--ink); }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="i-home" viewBox="0 0 32 32"><path d="M4.5 15.5 16 5l11.5 10.5"/><path d="M8 13v14h16V13"/><path d="M13.5 27v-7h5v7"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 32 32"><path d="M16 21V5.5M9 12l7-6.5 7 6.5M5.5 20.5v5a2 2 0 0 0 2 2h17a2 2 0 0 0 2-2v-5"/></symbol>
+  <symbol id="i-people" viewBox="0 0 32 32"><circle cx="11.5" cy="11" r="4.5"/><path d="M3.5 26.5c0-4.7 3.6-8 8-8s8 3.3 8 8"/><circle cx="22.5" cy="12.5" r="3.5"/><path d="M21.5 18.6c4 .1 7 3 7 7.4"/></symbol>
+  <symbol id="i-heartmsg" viewBox="0 0 32 32"><path d="M6.5 5.5h19a3 3 0 0 1 3 3v11a3 3 0 0 1-3 3H15l-6.5 5v-5h-2a3 3 0 0 1-3-3v-11a3 3 0 0 1 3-3z"/><path d="M16 18.2s-4.6-2.8-4.6-5.6a2.3 2.3 0 0 1 4.6-.6 2.3 2.3 0 0 1 4.6.6c0 2.8-4.6 5.6-4.6 5.6z" fill="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="i-photo" viewBox="0 0 32 32"><rect x="4" y="6" width="24" height="20" rx="3"/><circle cx="11.5" cy="12.5" r="2.4"/><path d="M5 23.5l7-7 5 5 3.5-3.5 6.5 6.5"/></symbol>
+  <symbol id="i-play" viewBox="0 0 32 32"><path d="M9.5 5.5v21l17.5-10.5z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 32 32"><rect x="11.5" y="3.5" width="9" height="16" rx="4.5" fill="currentColor"/><path d="M6.5 14.5a9.5 9.5 0 0 0 19 0M16 24.5V28.5M10.5 28.5h11"/></symbol>
+  <symbol id="i-to" viewBox="0 0 32 32"><path d="M18 8l8 8-8 8M25.5 16H6"/></symbol>
+</svg>
+
+<!-- =========================== Family ================================= -->
+<main class="pane" id="family">
+  <div class="head">
+    <div class="brand"><span class="mark"><svg class="icon"><use href="#i-home"/></svg></span>gma.4mn.org<a class="me" href="#" aria-label="You are signed in as Sarah">S</a></div>
+    <h1>Family</h1>
+    <p class="lede">Everyone’s photos and videos, newest first.</p>
+    <button class="upload" type="button"><svg class="icon" aria-hidden="true"><use href="#i-upload"/></svg>Share a photo or video</button>
+  </div>
+
+  <div class="list">
+    <div class="day">Today</div>
+
+    <article class="card">
+      <div class="card-head">
+        <span class="avatar" aria-hidden="true">S</span>
+        <div><div class="name">Sarah</div><div class="when">Video · 9:58 am</div></div>
+      </div>
+      <a class="media" href="#" aria-label="Play Sarah’s video">
+        <img src="../assets/photos/p646.jpg" alt="Lily in a sunny field">
+        <span class="play" aria-hidden="true"><svg class="icon"><use href="#i-play"/></svg></span>
+        <span class="len">1:02</span>
+      </a>
+      <p class="caption">Lily at the farm today. She wanted you to see her new boots!</p>
+      <div class="gma"><span>Grandma</span>
+        <span class="acts"><span class="chip love"><span class="e"><img src="../assets/emoji/emoji_u2764.svg" alt=""></span>Love</span></span>
+        <span class="t">10:42 am</span>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <span class="avatar" aria-hidden="true">L</span>
+        <div><div class="name">Lily</div><div class="when">Photo · 8:40 am</div></div>
+      </div>
+      <a class="media" href="#"><img src="../assets/photos/p837.jpg" alt="Biscuit the bulldog" style="object-position:center 30%"></a>
+      <p class="caption">Meet Biscuit! He snores.</p>
+      <div class="gma"><span class="quiet">Grandma hasn’t reacted yet</span></div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <span class="avatar" aria-hidden="true">C</span>
+        <div><div class="name">Aunt Carol</div><div class="when">Photo · 7:30 am</div></div>
+      </div>
+      <a class="media" href="#"><img src="../assets/photos/p152.jpg" alt="Purple petunias in a garden"></a>
+      <p class="caption">My petunias came back!</p>
+      <div class="gma"><span>Grandma</span>
+        <span class="acts"><span class="bubble sm">Made my day</span></span>
+        <span class="t">10:31 am</span>
+      </div>
+    </article>
+
+    <div class="day">Yesterday</div>
+    <article class="card">
+      <div class="card-head">
+        <span class="avatar" aria-hidden="true">M</span>
+        <div><div class="name">Mike</div><div class="when">3 photos · 7:12 pm</div></div>
+      </div>
+      <a class="media trio" href="#">
+        <img src="../assets/photos/p1015.jpg" alt="A fjord from a cliff top">
+        <img src="../assets/photos/p174.jpg" alt="Hot-air balloons over palm trees">
+        <img src="../assets/photos/p129.jpg" alt="A bench by the bay">
+      </a>
+      <p class="caption">Our trip, in three pictures. The balloons were Jake’s idea.</p>
+      <div class="gma"><span class="quiet">Grandma hasn’t reacted yet</span></div>
+    </article>
+  </div>
+</main>
+
+<!-- ======================= Grandma's Feed ============================== -->
+<main class="pane" id="grandma">
+  <div class="head">
+    <div class="brand"><span class="mark"><svg class="icon"><use href="#i-home"/></svg></span>gma.4mn.org<a class="me" href="#" aria-label="You are signed in as Sarah">S</a></div>
+    <h1>Grandma’s Feed</h1>
+    <p class="lede">Everything Grandma sent, newest first.</p>
+  </div>
+
+  <ul class="list">
+    <li class="day">Today</li>
+    <li class="ev">
+      <img class="ev-thumb" src="../assets/photos/p646.jpg" alt="">
+      <div>
+        <div class="ev-top">
+          <span class="chip love"><span class="e"><img src="../assets/emoji/emoji_u2764.svg" alt=""></span>Love</span>
+          <span class="ev-time">10:42 am</span>
+        </div>
+        <div class="ev-to"><svg class="icon" aria-hidden="true"><use href="#i-to"/></svg>to <b>Sarah</b></div>
+        <div class="ev-about">On Sarah’s video: Lily at the farm</div>
+      </div>
+    </li>
+    <li class="ev">
+      <img class="ev-thumb" src="../assets/photos/p152.jpg" alt="">
+      <div>
+        <div class="ev-top">
+          <span class="bubble">Made my day</span>
+          <span class="ev-time">10:31 am</span>
+        </div>
+        <div class="ev-to"><svg class="icon" aria-hidden="true"><use href="#i-to"/></svg>to <b>Aunt Carol</b></div>
+        <div class="ev-about">On Aunt Carol’s petunias</div>
+      </div>
+    </li>
+    <li class="ev voice">
+      <img class="ev-thumb" src="../assets/photos/p815.jpg" alt="">
+      <div>
+        <div class="ev-top">
+          <span class="vtag"><svg class="icon" aria-hidden="true"><use href="#i-mic"/></svg>Voice message</span>
+          <span class="ev-time">9:15 am</span>
+        </div>
+        <div class="ev-to"><svg class="icon" aria-hidden="true"><use href="#i-to"/></svg>to <b>everyone</b></div>
+        <div class="ev-about">Said on the family photo</div>
+      </div>
+      <p class="said">“Hello, my darlings. Thank you for all the pictures this week. Lily, those boots! Love to you all.”</p>
+      <div class="player">
+        <button class="vplay" type="button" aria-label="Play Grandma’s voice message, 42 seconds"><svg class="icon" aria-hidden="true"><use href="#i-play"/></svg></button>
+        <svg class="wave" viewBox="0 0 201 24" preserveAspectRatio="none" aria-hidden="true"><rect x="0" y="8" width="3" height="8" rx="1.5"/><rect x="6" y="7" width="3" height="10" rx="1.5"/><rect x="12" y="7" width="3" height="10" rx="1.5"/><rect x="18" y="5.5" width="3" height="13" rx="1.5"/><rect x="24" y="10" width="3" height="4" rx="1.5"/><rect x="30" y="10" width="3" height="4" rx="1.5"/><rect x="36" y="8.5" width="3" height="7" rx="1.5"/><rect x="42" y="9" width="3" height="6" rx="1.5"/><rect x="48" y="4" width="3" height="16" rx="1.5"/><rect x="54" y="3.5" width="3" height="17" rx="1.5"/><rect x="60" y="7" width="3" height="10" rx="1.5"/><rect x="66" y="6.5" width="3" height="11" rx="1.5"/><rect x="72" y="10" width="3" height="4" rx="1.5"/><rect x="78" y="10" width="3" height="4" rx="1.5"/><rect x="84" y="4.5" width="3" height="15" rx="1.5"/><rect x="90" y="5.5" width="3" height="13" rx="1.5"/><rect x="96" y="3" width="3" height="18" rx="1.5"/><rect x="102" y="4" width="3" height="16" rx="1.5"/><rect x="108" y="10" width="3" height="4" rx="1.5"/><rect x="114" y="8.5" width="3" height="7" rx="1.5"/><rect x="120" y="9" width="3" height="6" rx="1.5"/><rect x="126" y="8" width="3" height="8" rx="1.5"/><rect x="132" y="2.5" width="3" height="19" rx="1.5"/><rect x="138" y="4.5" width="3" height="15" rx="1.5"/><rect x="144" y="6.5" width="3" height="11" rx="1.5"/><rect x="150" y="7" width="3" height="10" rx="1.5"/><rect x="156" y="10" width="3" height="4" rx="1.5"/><rect x="162" y="9" width="3" height="6" rx="1.5"/><rect x="168" y="6.5" width="3" height="11" rx="1.5"/><rect x="174" y="7" width="3" height="10" rx="1.5"/><rect x="180" y="4.5" width="3" height="15" rx="1.5"/><rect x="186" y="7.5" width="3" height="9" rx="1.5"/><rect x="192" y="10" width="3" height="4" rx="1.5"/><rect x="198" y="9.5" width="3" height="5" rx="1.5"/></svg>
+        <span class="dur">0:42</span>
+      </div>
+    </li>
+
+    <li class="day">Yesterday</li>
+    <li class="ev">
+      <img class="ev-thumb" src="../assets/photos/p1062.jpg" alt="">
+      <div>
+        <div class="ev-top">
+          <span class="chip funny"><span class="e"><img src="../assets/emoji/emoji_u1f602.svg" alt=""></span>Funny</span>
+          <span class="ev-time">7:52 pm</span>
+        </div>
+        <div class="ev-to"><svg class="icon" aria-hidden="true"><use href="#i-to"/></svg>to <b>Sarah</b></div>
+        <div class="ev-about">On Sarah’s photo: Pickle does not do Mondays.</div>
+      </div>
+    </li>
+    <li class="ev">
+      <img class="ev-thumb" src="../assets/photos/p696.jpg" alt="">
+      <div>
+        <div class="ev-top">
+          <span class="bubble">Thank you</span>
+          <span class="ev-time">4:10 pm</span>
+        </div>
+        <div class="ev-to"><svg class="icon" aria-hidden="true"><use href="#i-to"/></svg>to <b>Ben</b></div>
+        <div class="ev-about">On Ben’s photo: Tulips for your table.</div>
+      </div>
+    </li>
+    <li class="ev">
+      <img class="ev-thumb" src="../assets/photos/p1003.jpg" alt="">
+      <div>
+        <div class="ev-top">
+          <span class="chip wow"><span class="e"><img src="../assets/emoji/emoji_u1f62e.svg" alt=""></span>Wow</span>
+          <span class="ev-time">11:20 am</span>
+        </div>
+        <div class="ev-to"><svg class="icon" aria-hidden="true"><use href="#i-to"/></svg>to <b>Jake</b></div>
+        <div class="ev-about">On Jake’s photo: A fawn came right up to the porch!</div>
+      </div>
+    </li>
+  </ul>
+</main>
+
+<!-- ============================ Mine =================================== -->
+<main class="pane" id="mine">
+  <div class="head">
+    <div class="brand"><span class="mark"><svg class="icon"><use href="#i-home"/></svg></span>gma.4mn.org<a class="me" href="#" aria-label="You are signed in as Sarah">S</a></div>
+    <h1>Mine</h1>
+    <p class="lede">What you shared, and what Grandma said back.</p>
+    <button class="upload" type="button"><svg class="icon" aria-hidden="true"><use href="#i-upload"/></svg>Share a photo or video</button>
+  </div>
+
+  <div class="list">
+    <div class="day">This week</div>
+    <article class="card">
+      <a class="media" href="#" aria-label="Your video: Lily at the farm">
+        <img src="../assets/photos/p646.jpg" alt="Lily in a sunny field" style="height:190px">
+        <span class="play" aria-hidden="true"><svg class="icon"><use href="#i-play"/></svg></span>
+        <span class="len">1:02</span>
+      </a>
+      <div class="mine-meta">
+        <p class="mine-cap">Lily at the farm today. She wanted you to see her new boots!</p>
+        <p class="mine-when">Video · Today, 9:58 am</p>
+      </div>
+      <div class="gma"><span>Grandma</span>
+        <span class="acts"><span class="chip love"><span class="e"><img src="../assets/emoji/emoji_u2764.svg" alt=""></span>Love</span></span>
+        <span class="t">10:42 am</span>
+      </div>
+    </article>
+
+    <article class="card">
+      <a class="media" href="#" aria-label="Your photo: almond cookies"><img src="../assets/photos/p835.jpg" alt="Almond cookies and daffodils"></a>
+      <div class="mine-meta">
+        <p class="mine-cap">Lily and I baked your almond cookies.</p>
+        <p class="mine-when">Photo · Sunday</p>
+      </div>
+      <div class="gma"><span>Grandma</span>
+        <span class="acts"><span class="chip thankful"><span class="e"><img src="../assets/emoji/emoji_u1f64f.svg" alt=""></span>Thankful</span>
+        <span class="bubble sm">So beautiful</span></span>
+        <span class="t">Sunday</span>
+      </div>
+    </article>
+
+    <article class="card">
+      <a class="media" href="#" aria-label="Your photo: Pickle in a blanket"><img src="../assets/photos/p1062.jpg" alt="Pickle the pug wrapped in a blanket"></a>
+      <div class="mine-meta">
+        <p class="mine-cap">Pickle does not do Mondays.</p>
+        <p class="mine-when">Photo · Last week</p>
+      </div>
+      <div class="gma"><span>Grandma</span>
+        <span class="acts"><span class="chip funny"><span class="e"><img src="../assets/emoji/emoji_u1f602.svg" alt=""></span>Funny</span></span>
+        <span class="t">Yesterday</span>
+      </div>
+    </article>
+
+    <article class="card">
+      <a class="media" href="#" aria-label="Your photo: soup night"><img src="../assets/photos/p292.jpg" alt="Vegetables on a cutting board"></a>
+      <div class="mine-meta">
+        <p class="mine-cap">Soup night, with your recipe.</p>
+        <p class="mine-when">Photo · Last week</p>
+      </div>
+      <div class="gma"><span class="quiet">Grandma hasn’t reacted yet</span></div>
+    </article>
+  </div>
+</main>
+
+<nav class="tabs" aria-label="Sections">
+  <a class="tab" href="family.html" data-tab="family"><svg class="icon" aria-hidden="true"><use href="#i-people"/></svg>Family</a>
+  <a class="tab" href="family.html?tab=grandma" data-tab="grandma"><svg class="icon" aria-hidden="true"><use href="#i-heartmsg"/></svg>Grandma’s Feed</a>
+  <a class="tab" href="family.html?tab=mine" data-tab="mine"><svg class="icon" aria-hidden="true"><use href="#i-photo"/></svg>Mine</a>
+</nav>
+<script>
+  document.querySelector('.tab[data-tab="' + document.documentElement.dataset.state + '"]').setAttribute('aria-current', 'page');
+</script>
+</body>
+</html>

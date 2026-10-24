@@ -1,0 +1,338 @@
+{
+  "now": 1792597320000,
+  "settings": {
+    "night_start": "21:00",
+    "night_end": "07:00",
+    "timezone": "America/Chicago"
+  },
+  "presets": [
+    {
+      "id": "preset_1",
+      "text": "Love you",
+      "sort": 1,
+      "active": 1
+    },
+    {
+      "id": "preset_2",
+      "text": "Call me",
+      "sort": 2,
+      "active": 1
+    },
+    {
+      "id": "preset_3",
+      "text": "Thank you",
+      "sort": 3,
+      "active": 1
+    },
+    {
+      "id": "preset_4",
+      "text": "Miss you all",
+      "sort": 4,
+      "active": 1
+    },
+    {
+      "id": "preset_5",
+      "text": "So beautiful",
+      "sort": 5,
+      "active": 1
+    },
+    {
+      "id": "preset_6",
+      "text": "Made my day",
+      "sort": 6,
+      "active": 1
+    },
+    {
+      "id": "preset_7",
+      "text": "Come visit soon",
+      "sort": 7,
+      "active": 1
+    },
+    {
+      "id": "preset_8",
+      "text": "Proud of you",
+      "sort": 8,
+      "active": 1
+    }
+  ],
+  "slideshow": [
+    {
+      "id": "it_p64",
+      "kind": "photo",
+      "sender": {
+        "id": "u_mike",
+        "name": "Mike Lee",
+        "short_name": "Mike"
+      },
+      "caption": "Sarah picked chamomile for your tea.",
+      "created_at": 1792533600000,
+      "ready_at": 1792533600000,
+      "width": 1000,
+      "height": 1500,
+      "renditions": {
+        "thumb": {
+          "url": "../../design/assets/photos/p64.jpg"
+        },
+        "display": {
+          "url": "../../design/assets/photos/p64.jpg",
+          "width": 1000,
+          "height": 1500
+        }
+      }
+    },
+    {
+      "id": "it_p1003",
+      "kind": "photo",
+      "sender": {
+        "id": "u_carol",
+        "name": "Carol Bennett",
+        "short_name": "Aunt Carol"
+      },
+      "caption": "A little visitor in the woods behind my house.",
+      "created_at": 1792357200000,
+      "ready_at": 1792357200000,
+      "width": 1066,
+      "height": 1600,
+      "renditions": {
+        "thumb": {
+          "url": "../../design/assets/photos/p1003.jpg"
+        },
+        "display": {
+          "url": "../../design/assets/photos/p1003.jpg",
+          "width": 1066,
+          "height": 1600
+        }
+      }
+    },
+    {
+      "id": "it_p835",
+      "kind": "photo",
+      "sender": {
+        "id": "u_sarah",
+        "name": "Sarah Lee",
+        "short_name": "Sarah"
+      },
+      "caption": "Lily baked your cookies!",
+      "created_at": 1792339200000,
+      "ready_at": 1792339200000,
+      "width": 1600,
+      "height": 1067,
+      "renditions": {
+        "thumb": {
+          "url": "../../design/assets/photos/p835.jpg"
+        },
+        "display": {
+          "url": "../../design/assets/photos/p835.jpg",
+          "width": 1600,
+          "height": 1067
+        }
+      }
+    },
+    {
+      "id": "it_p129",
+      "kind": "photo",
+      "sender": {
+        "id": "u_mike",
+        "name": "Mike Lee",
+        "short_name": "Mike"
+      },
+      "caption": "Our old bench by the water.",
+      "created_at": 1792267200000,
+      "ready_at": 1792267200000,
+      "width": 1600,
+      "height": 1060,
+      "renditions": {
+        "thumb": {
+          "url": "../../design/assets/photos/p129.jpg"
+        },
+        "display": {
+          "url": "../../design/assets/photos/p129.jpg",
+          "width": 1600,
+          "height": 1060
+        }
+      }
+    },
+    {
+      "id": "it_p660",
+      "kind": "photo",
+      "sender": {
+        "id": "u_jake",
+        "name": "Jake Alvarez",
+        "short_name": "Jake"
+      },
+      "caption": "Sparklers on the porch. We missed you!",
+      "created_at": 1792287000000,
+      "ready_at": 1792287000000,
+      "width": 1000,
+      "height": 1500,
+      "renditions": {
+        "thumb": {
+          "url": "../../design/assets/photos/p660.jpg"
+        },
+        "display": {
+          "url": "../../design/assets/photos/p660.jpg",
+          "width": 1000,
+          "height": 1500
+        }
+      }
+    }
+  ],
+  "new": [
+    {
+      "batch_id": "b_sarah",
+      "sender": {
+        "id": "u_sarah",
+        "name": "Sarah Lee",
+        "short_name": "Sarah"
+      },
+      "items": [
+        {
+          "id": "it_v646",
+          "kind": "video",
+          "caption": "Lily at the farm today. She wanted you to see her new boots!",
+          "created_at": 1792587900000,
+          "ready_at": 1792587900000,
+          "width": 1600,
+          "height": 1067,
+          "duration_ms": 62000,
+          "renditions": {
+            "thumb": {
+              "url": "../../design/assets/photos/p646.jpg"
+            },
+            "poster": {
+              "url": "../../design/assets/photos/p646.jpg",
+              "width": 1600,
+              "height": 1067
+            },
+            "video": {
+              "url": "fixture-video-missing.mp4"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "batch_id": "b_mike",
+      "sender": {
+        "id": "u_mike",
+        "name": "Mike Lee",
+        "short_name": "Mike"
+      },
+      "items": [
+        {
+          "id": "it_b1",
+          "kind": "photo",
+          "sender": {
+            "id": "u_mike",
+            "name": "Mike Lee",
+            "short_name": "Mike"
+          },
+          "caption": "Our old bench by the water.",
+          "created_at": 1792537800000,
+          "ready_at": 1792537800000,
+          "width": 1600,
+          "height": 1060,
+          "renditions": {
+            "thumb": {
+              "url": "../../design/assets/photos/p129.jpg"
+            },
+            "display": {
+              "url": "../../design/assets/photos/p129.jpg",
+              "width": 1600,
+              "height": 1060
+            }
+          },
+          "batch_id": "b_mike"
+        },
+        {
+          "id": "it_b2",
+          "kind": "photo",
+          "sender": {
+            "id": "u_mike",
+            "name": "Mike Lee",
+            "short_name": "Mike"
+          },
+          "caption": "The fjord from the ferry.",
+          "created_at": 1792537860000,
+          "ready_at": 1792537860000,
+          "width": 1600,
+          "height": 589,
+          "renditions": {
+            "thumb": {
+              "url": "../../design/assets/photos/p174.jpg"
+            },
+            "display": {
+              "url": "../../design/assets/photos/p174.jpg",
+              "width": 1600,
+              "height": 589
+            }
+          },
+          "batch_id": "b_mike"
+        },
+        {
+          "id": "it_b3",
+          "kind": "photo",
+          "sender": {
+            "id": "u_mike",
+            "name": "Mike Lee",
+            "short_name": "Mike"
+          },
+          "caption": "",
+          "created_at": 1792537920000,
+          "ready_at": 1792537920000,
+          "width": 1600,
+          "height": 1067,
+          "renditions": {
+            "thumb": {
+              "url": "../../design/assets/photos/p1015.jpg"
+            },
+            "display": {
+              "url": "../../design/assets/photos/p1015.jpg",
+              "width": 1600,
+              "height": 1067
+            }
+          },
+          "batch_id": "b_mike"
+        }
+      ]
+    },
+    {
+      "batch_id": "b_lily",
+      "sender": {
+        "id": "u_lily",
+        "name": "Lily Lee",
+        "short_name": "Lily"
+      },
+      "items": [
+        {
+          "id": "it_p837",
+          "kind": "photo",
+          "sender": {
+            "id": "u_lily",
+            "name": "Lily Lee",
+            "short_name": "Lily"
+          },
+          "caption": "Meet Biscuit! He snores.",
+          "created_at": 1792440000000,
+          "ready_at": 1792440000000,
+          "width": 1600,
+          "height": 1067,
+          "renditions": {
+            "thumb": {
+              "url": "../../design/assets/photos/p837.jpg"
+            },
+            "display": {
+              "url": "../../design/assets/photos/p837.jpg",
+              "width": 1600,
+              "height": 1067
+            }
+          },
+          "batch_id": "b_lily"
+        }
+      ]
+    }
+  ],
+  "family_photo": {
+    "url": "../../design/assets/photos/p815.jpg"
+  }
+}

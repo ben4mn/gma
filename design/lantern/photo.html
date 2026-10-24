@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en" data-state="default">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1280, height=800, initial-scale=1">
+<title>A photo from Sarah · Grandma's frame · Lantern</title>
+<script>
+  // States: ?state=presets | ?state=sent | ?state=video (default: the photo is open)
+  (function () {
+    var s = new URLSearchParams(location.search).get('state');
+    document.documentElement.dataset.state = ['presets', 'sent', 'video'].indexOf(s) >= 0 ? s : 'default';
+  })();
+</script>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="grandma.css">
+<style>
+  /* ---------- The stage: the photo, whole, glowing on a blurred fill of itself ---------- */
+  .stage { position: absolute; left: 0; top: 0; width: 872px; height: 800px; overflow: hidden; }
+  .stage .print { left: 24px; top: 47px; width: 824px; height: auto; }
+  .stage .fill { filter: blur(44px) brightness(.4) saturate(1.15); }
+  .stage .vignette { background: radial-gradient(90% 80% at 50% 40%, rgba(16, 18, 21, 0) 50%, rgba(16, 18, 21, .6) 100%); }
+  .print-shade {
+    position: absolute; left: 24px; top: 47px; width: 824px; height: 549px; border-radius: 14px;
+    background: rgba(10, 11, 13, .42); display: none; pointer-events: none;
+  }
+  [data-state="sent"] .print-shade, [data-state="video"] .print-shade { display: block; }
+  [data-state="video"] .print-shade { background: rgba(10, 11, 13, .28); }
+
+  /* ---------- The placard: who, when, what they wrote, and what you can do ---------- */
+  .placard {
+    position: absolute; right: 0; top: 0; width: 408px; height: 800px;
+    padding: 36px 32px 24px; background: var(--surface);
+    border-left: 1px solid rgba(244, 239, 230, .06);
+    box-shadow: -30px 0 60px rgba(0, 0, 0, .35);
+  }
+  .who { display: flex; align-items: center; gap: 18px; }
+  .avatar {
+    width: 76px; height: 76px; flex: none; border-radius: 50%;
+    display: grid; place-items: center;
+    background: var(--honey-deep); color: var(--honey);
+    font-size: 36px; font-weight: 700; box-shadow: inset 0 0 0 2px rgba(242, 181, 68, .45);
+  }
+  .who-name { font-size: var(--g-name); font-weight: 700; line-height: 1.08; }
+  .who-when { margin-top: 4px; font-size: var(--g-meta); font-weight: 500; color: var(--muted); }
+  .kind {
+    display: none; align-items: center; gap: 10px; margin-top: 22px;
+    font-size: var(--g-small); font-weight: 600; color: var(--honey);
+  }
+  .kind .icon { font-size: 26px; }
+  [data-state="video"] .kind { display: flex; }
+  .caption {
+    margin-top: 26px; font-family: var(--font-words); font-size: var(--g-caption);
+    line-height: 1.42; font-weight: 400; color: var(--text);
+  }
+  [data-state="video"] .caption { margin-top: 12px; }
+
+  /* who a reaction goes to, said before she taps */
+  .to-line { margin-top: 24px; font-size: var(--g-meta); font-weight: 500; line-height: 1.25; color: var(--muted); }
+  .to-line b { color: var(--text); font-weight: 700; }
+  .reactions { margin-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .react {
+    height: 120px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+    border-radius: var(--r-lg); background: var(--raised);
+    font-size: var(--g-label); font-weight: 600; line-height: 1.1;
+    box-shadow: inset 0 1px 0 rgba(244, 239, 230, .06);
+    transition: transform .18s var(--ease), background-color .18s var(--ease);
+  }
+  .react img { width: 54px; height: 54px; }
+  .react:active { transform: scale(.97); background: var(--raised-press); }
+  .react-word { display: inline-flex; align-items: center; gap: 6px; }
+  .react-word .icon { font-size: 24px; stroke-width: 3; display: none; }
+  /* Love, chosen */
+  [data-state="sent"] .react[data-reaction="love"] {
+    background: var(--rose-deep); color: var(--text);
+    box-shadow: inset 0 0 0 3px var(--rose), 0 0 24px rgba(242, 167, 176, .25);
+  }
+  [data-state="sent"] .react[data-reaction="love"] .icon { display: inline; color: var(--rose); }
+
+  .send { position: absolute; left: 32px; right: 32px; bottom: 24px; padding: 0 18px; gap: 14px; white-space: nowrap; font-size: 28px; font-weight: 700; }
+  .send .icon { font-size: 42px; }
+
+  /* ---------- The dock: Home, then back and forth ---------- */
+  .dock { width: 848px; padding-left: 160px; }
+  .dock .spacer { flex: 1; }
+  .dock .btn { padding: 0 30px 0 22px; }
+  .dock .btn--next { padding: 0 22px 0 30px; }
+  .btn--back { display: none !important; }
+  [data-state="presets"] .btn--back { display: inline-flex !important; }
+  [data-state="presets"] .btn--prev, [data-state="presets"] .btn--next { display: none; }
+  [data-state="presets"] .dock { width: auto; }
+  [data-state="presets"] .dock .spacer { display: none; }
+
+  /* ---------- Sent: warm and brief ---------- */
+  .sent {
+    position: absolute; left: 436px; top: 322px; transform: translate(-50%, -50%); z-index: 8;
+    width: 500px; padding: 34px 40px 38px; border-radius: 36px; text-align: center;
+    background: var(--surface); display: none;
+    border: 2px solid rgba(242, 167, 176, .55);
+    box-shadow: 0 0 60px rgba(242, 167, 176, .22), var(--shadow-deep);
+  }
+  [data-state="sent"] .sent { display: block; }
+  .sent img { width: 104px; height: 104px; margin: 0 auto 14px; }
+  .sent-title { font-size: 48px; font-weight: 700; line-height: 1.1; }
+  .sent-line { margin-top: 12px; font-family: var(--font-words); font-style: italic; font-size: var(--g-body); color: var(--muted); }
+
+  /* ---------- Video: a poster and one huge play button. Nothing plays until a tap. ---------- */
+  .play {
+    position: absolute; left: 436px; top: 322px; transform: translate(-50%, -50%); z-index: 8;
+    display: none; flex-direction: column; align-items: center; gap: 18px;
+    padding: 12px; border-radius: 40px;
+  }
+  [data-state="video"] .play { display: flex; }
+  .play-disc {
+    width: 188px; height: 188px; border-radius: 50%; display: grid; place-items: center;
+    background: var(--honey); color: var(--honey-ink);
+    box-shadow: 0 0 0 10px rgba(242, 181, 68, .22), 0 0 70px rgba(242, 181, 68, .35), 0 20px 50px rgba(0, 0, 0, .5);
+    transition: transform .18s var(--ease);
+  }
+  .play-disc .icon { font-size: 92px; margin-left: 12px; }
+  .play:active .play-disc { transform: scale(.97); }
+  .play-word {
+    padding: 14px 30px; border-radius: var(--r-pill); background: var(--surface);
+    font-size: 30px; font-weight: 600; box-shadow: 0 10px 30px rgba(0, 0, 0, .45);
+  }
+
+  /* ---------- Presets: eight things to say, to Sarah only ---------- */
+  .presets { position: absolute; inset: 0; z-index: 15; background: var(--bg); display: none; }
+  [data-state="presets"] .presets { display: block; }
+  [data-state="presets"] .placard, [data-state="presets"] .stage { visibility: hidden; }
+  .presets-head { position: absolute; left: 32px; top: 40px; right: 32px; display: flex; align-items: center; gap: 28px; }
+  .presets-thumb { position: relative; width: 168px; height: 112px; flex: none; }
+  .presets-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: 16px; }
+  .presets-thumb .photo { box-shadow: 0 0 0 1px rgba(244, 239, 230, .1), 0 10px 30px rgba(0, 0, 0, .5); }
+  .presets-thumb .glow { filter: blur(24px) saturate(1.3); opacity: .5; transform: scale(1.1); }
+  .presets-title { font-size: var(--g-title); font-weight: 700; line-height: 1.12; }
+  .presets-sub { margin-top: 8px; display: flex; align-items: center; gap: 12px; font-size: var(--g-body); color: var(--muted); }
+  .presets-sub .icon { font-size: 32px; color: var(--honey); }
+  .presets-sub b { color: var(--text); font-weight: 600; }
+  .grid {
+    position: absolute; left: 32px; right: 32px; top: 196px;
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px;
+  }
+  .preset {
+    height: 188px; padding: 0 16px; border-radius: 28px; background: var(--raised);
+    display: flex; align-items: center; justify-content: center; text-align: center;
+    font-family: var(--font-words); font-size: var(--g-preset); font-weight: 500; line-height: 1.2; text-wrap: balance;
+    box-shadow: inset 0 1px 0 rgba(244, 239, 230, .06), 0 8px 22px rgba(0, 0, 0, .3);
+    transition: transform .18s var(--ease), background-color .18s var(--ease);
+  }
+  .preset:active { transform: scale(.97); background: var(--raised-press); }
+  .q::before { content: "\201C"; color: var(--honey); }
+  .q::after  { content: "\201D"; color: var(--honey); }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M3.5 11.2 12 3.8l8.5 7.4"/><path d="M6 9.6v10.1h12V9.6"/><path d="M10 19.7v-5.2h4v5.2"/></symbol>
+  <symbol id="i-prev" viewBox="0 0 24 24"><path d="M14.5 5.5 8 12l6.5 6.5"/></symbol>
+  <symbol id="i-next" viewBox="0 0 24 24"><path d="M9.5 5.5 16 12l-6.5 6.5"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M10 5.5 3.5 12l6.5 6.5"/><path d="M4 12h16"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M5.2 4.5h13.6a2.2 2.2 0 0 1 2.2 2.2v8.4a2.2 2.2 0 0 1-2.2 2.2h-6.6l-4.9 3.6v-3.6H5.2A2.2 2.2 0 0 1 3 15.1V6.7a2.2 2.2 0 0 1 2.2-2.2z"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7.5 4.8v14.4L19.2 12z" fill="currentColor"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-person" viewBox="0 0 24 24"><circle cx="12" cy="8.2" r="3.8"/><path d="M4.8 20.2a7.2 7.2 0 0 1 14.4 0"/></symbol>
+</svg>
+
+<!-- The stage -->
+<section class="stage" aria-label="Photo from Sarah">
+  <img class="fill" src="../assets/photos/p646.jpg" alt="" aria-hidden="true">
+  <div class="vignette"></div>
+  <img class="print" src="../assets/photos/p646.jpg" alt="Lily walking through a sunlit field at the farm">
+  <div class="print-shade"></div>
+
+  <button class="play" type="button" aria-label="Play the video from Sarah">
+    <span class="play-disc"><svg class="icon" aria-hidden="true"><use href="#i-play"/></svg></span>
+    <span class="play-word">Play video</span>
+  </button>
+
+  <div class="sent" role="status">
+    <img src="../assets/emoji/emoji_u2764.svg" alt="">
+    <div class="sent-title">Sent to Sarah</div>
+    <p class="sent-line">Your love is on its way.</p>
+  </div>
+</section>
+
+<!-- The placard -->
+<aside class="placard">
+  <div class="who">
+    <span class="avatar" aria-hidden="true">S</span>
+    <div>
+      <div class="who-name">Sarah</div>
+      <div class="who-when">This morning</div>
+    </div>
+  </div>
+  <div class="kind"><svg class="icon" aria-hidden="true"><use href="#i-play"/></svg>A video, about 1 minute</div>
+  <p class="caption">Lily at the farm today. She wanted you to see her new boots!</p>
+  <p class="to-line">Tell <b>Sarah</b> how you feel</p>
+
+  <div class="reactions" role="group" aria-label="Send Sarah a feeling">
+    <button class="react" type="button" data-reaction="love">
+      <img src="../assets/emoji/emoji_u2764.svg" alt="">
+      <span class="react-word"><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>Love</span>
+    </button>
+    <button class="react" type="button" data-reaction="funny">
+      <img src="../assets/emoji/emoji_u1f602.svg" alt="">
+      <span class="react-word">Funny</span>
+    </button>
+    <button class="react" type="button" data-reaction="wow">
+      <img src="../assets/emoji/emoji_u1f62e.svg" alt="">
+      <span class="react-word">Wow</span>
+    </button>
+    <button class="react" type="button" data-reaction="thankful">
+      <img src="../assets/emoji/emoji_u1f64f.svg" alt="">
+      <span class="react-word">Thankful</span>
+    </button>
+  </div>
+
+  <a class="btn btn--honey send" href="photo.html?state=presets">
+    <svg class="icon" aria-hidden="true"><use href="#i-chat"/></svg>
+    Send a message
+  </a>
+</aside>
+
+<!-- Presets: one big grid, to Sarah only -->
+<section class="presets" aria-label="Send Sarah a message">
+  <div class="presets-head">
+    <span class="presets-thumb">
+      <img class="glow" src="../assets/photos/p646.jpg" alt="" aria-hidden="true">
+      <img class="photo" src="../assets/photos/p646.jpg" alt="Sarah's photo of Lily at the farm">
+    </span>
+    <div>
+      <h1 class="presets-title">Send a message to Sarah</h1>
+      <p class="presets-sub"><svg class="icon" aria-hidden="true"><use href="#i-person"/></svg><span>It goes to <b>Sarah only</b>. Tap one to send it.</span></p>
+    </div>
+  </div>
+  <div class="grid">
+    <button class="preset" type="button"><span class="q">Love you</span></button>
+    <button class="preset" type="button"><span class="q">Call me</span></button>
+    <button class="preset" type="button"><span class="q">Thank you</span></button>
+    <button class="preset" type="button"><span class="q">Miss you all</span></button>
+    <button class="preset" type="button"><span class="q">So beautiful</span></button>
+    <button class="preset" type="button"><span class="q">Made my day</span></button>
+    <button class="preset" type="button"><span class="q">Come&nbsp;visit soon</span></button>
+    <button class="preset" type="button"><span class="q">Proud of you</span></button>
+  </div>
+</section>
+
+<!-- Home: always here, always in this place -->
+<a class="btn home" data-home href="home.html">
+  <svg class="icon" aria-hidden="true"><use href="#i-home"/></svg>
+  <span class="home-word">Home</span>
+</a>
+
+<!-- The dock -->
+<nav class="dock plate" aria-label="Frame">
+  <a class="btn btn--back" href="photo.html">
+    <svg class="icon" aria-hidden="true"><use href="#i-back"/></svg>
+    Back to the photo
+  </a>
+  <span class="spacer"></span>
+  <a class="btn btn--prev" href="photo.html">
+    <svg class="icon" aria-hidden="true"><use href="#i-prev"/></svg>
+    Previous
+  </a>
+  <a class="btn btn--next" href="photo.html">
+    Next
+    <svg class="icon" aria-hidden="true"><use href="#i-next"/></svg>
+  </a>
+</nav>
+
+<script>
+  if (document.documentElement.dataset.state === 'video')
+    document.querySelector('.stage').setAttribute('aria-label', 'Video from Sarah');
+</script>
+</body>
+</html>

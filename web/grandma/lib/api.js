@@ -1,0 +1,72 @@
+// The frame's only door to the server. In fixture mode (?fixture=1) it reads
+// fixtures/state.json and pretends every send worked, so screenshots need no server.
+
+// How long a request may go unanswered before it counts as "no answer" (status 0,
+// which the outbox retries): on half-dead Wi-Fi a request can otherwise hang
+// until TCP gives up, many minutes later.
+export const REQUEST_TIMEOUTS = Object.freeze({ json: 20_000, voice: 120_000 });
+
+function timeoutSignal(ms) {
+  if (typeof AbortSignal.timeout === 'function') return AbortSignal.timeout(ms);
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(new DOMException('The operation timed out.', 'TimeoutError')), ms);
+  return controller.signal;
+}
+
+export function createApi({ fixture = false, base = '', timeouts = REQUEST_TIMEOUTS } = {}) {
+  async function getState() {
+    if (fixture) {
+      const res = await fetch(new URL('../fixtures/state.json', import.meta.url));
+      return { state: await res.json(), cached: false };
+    }
+    const res = await fetch(`${base}/api/frame/state`, { cache: 'no-store', credentials: 'same-origin' });
+    if (!res.ok) throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status });
+    // the service worker marks the last good copy it serves while the server is unreachable
+    return { state: await res.json(), cached: res.headers.get('X-Gma-Cached') === '1' };
+  }
+
+  async function post(path, body) {
+    if (fixture) return { status: 200 };
+    const isForm = typeof FormData !== 'undefined' && body instanceof FormData;
+    try {
+      const res = await fetch(`${base}${path}`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        signal: timeoutSignal(isForm ? timeouts.voice : timeouts.json),
+        headers: isForm ? undefined : { 'Content-Type': 'application/json' },
+        body: isForm ? body : JSON.stringify(body),
+      });
+      let error = null;
+      if (!res.ok) error = (await res.json().catch(() => null))?.error?.message ?? `HTTP ${res.status}`;
+      return { status: res.status, error };
+    } catch (err) {
+      return { status: 0, error: String(err?.message ?? err) };
+    }
+  }
+
+  /** Send one outbox entry. */
+  function send(entry) {
+    const { kind, payload, client_id } = entry;
+    if (kind === 'react') return post('/api/frame/react', { item_id: payload.item_id, reaction: payload.reaction, client_id });
+    if (kind === 'preset') {
+      // preset_text lets a preset Ben deleted after the tap still arrive (the server's fallback)
+      const body = { item_id: payload.item_id, preset_id: payload.preset_id, client_id };
+      if (typeof payload.preset_text === 'string' && payload.preset_text) body.preset_text = payload.preset_text;
+      return post('/api/frame/preset', body);
+    }
+    if (kind === 'seen') return post('/api/frame/seen', { item_ids: payload.item_ids });
+    if (kind === 'voice') {
+      const form = new FormData();
+      form.append('client_id', client_id);
+      form.append('audio', payload.audio, payload.filename ?? 'voice.webm');
+      return post('/api/frame/voice', form);
+    }
+    return Promise.resolve({ status: 400, error: `Unknown outbox entry: ${kind}` });
+  }
+
+  function heartbeat(body) {
+    return post('/api/frame/heartbeat', body);
+  }
+
+  return { getState, send, heartbeat, fixture };
+}

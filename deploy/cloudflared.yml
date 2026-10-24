@@ -1,0 +1,14 @@
+# gma.4mn.org's own Cloudflare tunnel, run by the gma-tunnel container
+# (docker-compose.yml mounts this file at /etc/cloudflared/config.yml and the
+# tunnel's credentials at /etc/cloudflared/credentials.json). It reaches the
+# app over the compose network; nothing on the host is involved.
+# Setup, checks and removal: deploy/cloudflared.md.
+
+tunnel: c0773eb4-ed3d-42bf-aa5e-d6fe842ab67b
+credentials-file: /etc/cloudflared/credentials.json
+
+ingress:
+  - hostname: gma.4mn.org
+    service: http://app:8080
+  # Anything else that reaches this tunnel gets a 404. Keep this rule last.
+  - service: http_status:404

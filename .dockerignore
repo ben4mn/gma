@@ -1,0 +1,29 @@
+# Only server/ and web/ go into the image. Keep secrets, data and dev clutter out.
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+**/node_modules
+**/.DS_Store
+**/*.log
+data
+media
+design
+docs
+deploy
+pi
+web/e2e
+web/test
+web/package.json
+web/package-lock.json
+coverage
+playwright-report
+test-results
+.cache
+Dockerfile
+.dockerignore
+docker-compose.yml
+# Notes, not code. The vendored libraries' licences stay with them.
+**/*.md
+!web/vendor/**/LICENSE*

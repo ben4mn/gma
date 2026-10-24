@@ -1,0 +1,298 @@
+#!/bin/bash
+# Maintenance for Grandma's frame, run by Ben over SSH (as root: sudo gma-update).
+#
+#   gma-update                       apt update + full-upgrade, keep the old Chromium,
+#                                    restart the kiosk and check it came back
+#   gma-update --reboot              the same, then reboot instead of restarting the kiosk
+#   gma-update --no-auto-rollback    do not roll Chromium back if the local check fails
+#   gma-update --rollback-chromium [VERSION]
+#                                    reinstall the previous (or the given) Chromium and hold it
+#   gma-update --unhold-chromium     let the next update move Chromium forward again
+#   gma-update --status              versions, holds and the saved Chromium copies
+#
+# There are no unattended upgrades on the frame: Raspberry Pi pushes several
+# Chromium builds a month, and a bad one would black out Grandma's screen with
+# nobody there. Updates happen when Ben runs this and can look at the result.
+set -euo pipefail
+
+# shellcheck source=../lib/gma-kiosk/common.sh
+. /usr/local/lib/gma-kiosk/common.sh
+
+SAVE_DIR=$GMA_STATE_DIR/chromium-prev
+POOL_URL=${GMA_CHROMIUM_POOL_URL:-https://archive.raspberrypi.com/debian/pool/main/c/chromium}
+KEEP_VERSIONS=3
+CHROMIUM_PKGS="chromium chromium-common chromium-sandbox chromium-l10n chromium-driver"
+
+export DEBIAN_FRONTEND=noninteractive
+APT_OPTS=(-y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
+
+log()  { printf '\n== %s\n' "$*"; }
+info() { printf '   %s\n' "$*"; }
+
+[[ $(id -u) == 0 ]] || gma_die "run as root: sudo gma-update $*"
+
+installed_version() { # pkg -> version or empty
+    dpkg-query -W -f='${db:Status-Status} ${Version}\n' "$1" 2>/dev/null | awk '$1 == "installed" { print $2 }'
+}
+
+# The chromium-* packages that are installed (they must all move together).
+installed_chromium_pkgs() {
+    local p
+    for p in $CHROMIUM_PKGS; do
+        [[ -n $(installed_version "$p") ]] && printf '%s\n' "$p"
+    done
+    return 0
+}
+
+is_held() { apt-mark showhold 2>/dev/null | grep -qx "$1"; }
+
+arch() { dpkg --print-architecture; }
+
+# Debian file names encode the epoch's ':' as '%3a'; pool file names drop the epoch.
+deb_name_cache() { printf '%s_%s_%s.deb' "$1" "${2/:/%3a}" "$(arch)"; }
+deb_name_pool()  { printf '%s_%s_%s.deb' "$1" "${2#*:}" "$(arch)"; }
+
+# Keep a copy of the installed Chromium .debs before an upgrade replaces them.
+save_current_chromium() {
+    local ver pkg dir src got=0 want=0
+    ver=$(installed_version chromium)
+    [[ -n $ver ]] || { info "chromium is not installed; nothing to keep"; return 0; }
+    dir=$SAVE_DIR/$ver
+    mkdir -p "$dir"
+    for pkg in $(installed_chromium_pkgs); do
+        want=$((want + 1))
+        if [[ -s $dir/$(deb_name_pool "$pkg" "$ver") ]]; then
+            got=$((got + 1)); continue
+        fi
+        src=/var/cache/apt/archives/$(deb_name_cache "$pkg" "$ver")
+        if [[ -s $src ]]; then
+            cp -f "$src" "$dir/$(deb_name_pool "$pkg" "$ver")" && got=$((got + 1))
+        elif (cd "$dir" && apt-get download "$pkg=$ver" >/dev/null 2>&1); then
+            # apt-get download names the file with %3a; normalise it.
+            [[ -s $dir/$(deb_name_cache "$pkg" "$ver") ]] && mv -f "$dir/$(deb_name_cache "$pkg" "$ver")" "$dir/$(deb_name_pool "$pkg" "$ver")"
+            got=$((got + 1))
+        else
+            gma_warn "could not keep a copy of $pkg $ver (rollback will try the archive)"
+        fi
+    done
+    info "kept chromium $ver ($got of $want packages) in $dir"
+    # Keep only the newest few versions.
+    { ls -1 "$SAVE_DIR" | grep -v '^LAST$' | sort -V | head -n -"$KEEP_VERSIONS" || true; } | while read -r old; do
+        [[ -n $old ]] && rm -rf "${SAVE_DIR:?}/$old" && info "pruned saved chromium $old"
+    done
+    return 0
+}
+
+kiosk_restarts() { systemctl show -p NRestarts --value "$GMA_KIOSK_UNIT" 2>/dev/null || echo 0; }
+
+chromium_running() { pgrep -u "$GMA_KIOSK_USER" -f '/usr/lib/chromium/chromium' >/dev/null 2>&1; }
+
+# Local check: the unit is active, Chromium runs as the kiosk user and stays up
+# for 30 s without the unit restarting. Only Ben's eyes (or /admin's "last
+# seen") can confirm the page itself looks right.
+check_kiosk() {
+    local i before
+    info "waiting for Chromium to start..."
+    for i in $(seq 1 45); do
+        chromium_running && break
+        sleep 2
+    done
+    if ! chromium_running; then
+        gma_warn "Chromium is not running 90 s after the restart"
+        return 1
+    fi
+    before=$(kiosk_restarts)
+    info "Chromium is up; watching it for 30 s..."
+    sleep 30
+    if ! systemctl is-active --quiet "$GMA_KIOSK_UNIT" || ! chromium_running; then
+        gma_warn "the kiosk stopped within 30 s"
+        return 1
+    fi
+    if [[ $(kiosk_restarts) != "$before" ]]; then
+        gma_warn "the kiosk restarted itself during the check (crash loop?)"
+        return 1
+    fi
+    info "kiosk unit active, Chromium running as $GMA_KIOSK_USER"
+    return 0
+}
+
+check_network() {
+    local url origin
+    origin=$(gma_origin_of "$(gma_config_get KIOSK_URL https://gma.4mn.org/grandma)")
+    url=$(gma_config_get HEALTH_URL "$origin/healthz")
+    if curl -fsS -o /dev/null --max-time 10 "$url"; then
+        info "the server answers at $url"
+    else
+        gma_warn "the server does not answer at $url (the frame will keep showing saved photos)"
+    fi
+}
+
+reboot_needed() {
+    local running suffix newest
+    [[ -e /run/reboot-required ]] && return 0
+    running=$(uname -r)
+    suffix=${running#*+}
+    [[ $suffix != "$running" ]] || return 1
+    newest=$(ls -1 /lib/modules 2>/dev/null | grep -F -- "+$suffix" | sort -V | tail -n 1) || true
+    [[ -n $newest && $newest != "$running" ]]
+}
+
+hold_chromium() {
+    local p
+    for p in $(installed_chromium_pkgs); do apt-mark hold "$p" >/dev/null; done
+    info "held: $(installed_chromium_pkgs | tr '\n' ' ')"
+}
+
+unhold_chromium() {
+    local p
+    for p in $CHROMIUM_PKGS; do apt-mark unhold "$p" >/dev/null 2>&1 || true; done
+    info "chromium packages are no longer held; the next gma-update will upgrade them"
+}
+
+# Reinstall Chromium $1 from the saved copy, the apt cache, or the archive pool.
+rollback_chromium() {
+    local ver=${1-} cur pkg dir work deb files=()
+    cur=$(installed_version chromium)
+    if [[ -z $ver ]]; then
+        [[ -r $SAVE_DIR/LAST ]] || gma_die "no previous version recorded; pass one: gma-update --rollback-chromium 1:155.0.8059.79-1~deb13u1+rpt1"
+        ver=$(<"$SAVE_DIR/LAST")
+    fi
+    [[ $ver == *:* ]] || ver="1:$ver"   # Raspberry Pi's builds carry epoch 1
+    [[ $ver != "$cur" ]] || { info "chromium $ver is already installed"; hold_chromium; return 0; }
+    log "Rolling Chromium back: $cur -> $ver"
+
+    work=$(mktemp -d /tmp/gma-chromium.XXXXXX)
+    dir=$SAVE_DIR/$ver
+    for pkg in $(installed_chromium_pkgs); do
+        deb=$(deb_name_pool "$pkg" "$ver")
+        if [[ -s $dir/$deb ]]; then
+            cp -f "$dir/$deb" "$work/"
+            info "$pkg: from the saved copy"
+        elif [[ -s /var/cache/apt/archives/$(deb_name_cache "$pkg" "$ver") ]]; then
+            cp -f "/var/cache/apt/archives/$(deb_name_cache "$pkg" "$ver")" "$work/$deb"
+            info "$pkg: from the apt cache"
+        elif (cd "$work" && apt-get download "$pkg=$ver" >/dev/null 2>&1); then
+            [[ -s $work/$(deb_name_cache "$pkg" "$ver") ]] && mv -f "$work/$(deb_name_cache "$pkg" "$ver")" "$work/$deb"
+            info "$pkg: from the apt archive index"
+        elif curl -fsSL --max-time 600 -o "$work/$deb" "$POOL_URL/$deb"; then
+            # Older builds drop out of the index but stay in the pool. HTTPS is the
+            # only check here, so show the hash for the record.
+            info "$pkg: from $POOL_URL ($(sha256sum "$work/$deb" | cut -c1-16)...)"
+        else
+            if [[ $pkg == chromium || $pkg == chromium-common ]]; then
+                rm -rf "$work"
+                gma_die "cannot find $pkg $ver anywhere (saved copies: $(ls -1 "$SAVE_DIR" 2>/dev/null | grep -v LAST | tr '\n' ' '))"
+            fi
+            gma_warn "$pkg $ver not found; letting apt decide about it"
+            continue
+        fi
+        files+=("$work/$deb")
+    done
+
+    # Holds would block the downgrade itself.
+    unhold_chromium >/dev/null
+    apt-get "${APT_OPTS[@]}" --allow-downgrades install "${files[@]}"
+    rm -rf "$work"
+    hold_chromium
+    info "chromium is now $(installed_version chromium) and held until: gma-update --unhold-chromium"
+}
+
+show_status() {
+    local p v
+    log "Chromium"
+    for p in $CHROMIUM_PKGS; do
+        v=$(installed_version "$p")
+        [[ -n $v ]] || continue
+        if is_held "$p"; then info "$p $v (held)"; else info "$p $v"; fi
+    done
+    info "candidate: $(apt-cache policy chromium 2>/dev/null | awk '/Candidate:/ { print $2 }')"
+    info "saved copies: $(ls -1 "$SAVE_DIR" 2>/dev/null | grep -v '^LAST$' | tr '\n' ' ')"
+    [[ -r $SAVE_DIR/LAST ]] && info "rollback target: $(<"$SAVE_DIR/LAST")"
+    log "System"
+    info "kernel $(uname -r); reboot needed: $(reboot_needed && echo yes || echo no)"
+    info "kiosk: $(systemctl is-active "$GMA_KIOSK_UNIT" 2>/dev/null || true), restarts since boot: $(kiosk_restarts)"
+}
+
+do_update() {
+    local reboot_after=$1 auto_rollback=$2 before_ver after_ver avail
+    avail=$(df -Pm /var | awk 'NR == 2 { print $4 }')
+    (( avail >= 1024 )) || gma_die "only ${avail} MB free on /var; free some space first"
+
+    before_ver=$(installed_version chromium)
+    log "Keeping a copy of the current Chromium"
+    save_current_chromium
+    if is_held chromium; then
+        info "chromium is held (an earlier rollback); it will not be upgraded. Use --unhold-chromium to allow it."
+    fi
+
+    log "apt-get update"
+    apt-get update
+    log "apt-get full-upgrade"
+    apt-get "${APT_OPTS[@]}" full-upgrade
+    after_ver=$(installed_version chromium)
+    if [[ $before_ver != "$after_ver" ]]; then
+        info "chromium: $before_ver -> $after_ver"
+        # The rollback target is the version this update replaced.
+        [[ -n $before_ver ]] && printf '%s\n' "$before_ver" >"$SAVE_DIR/LAST"
+    else
+        info "chromium unchanged ($after_ver)"
+    fi
+
+    if [[ $reboot_after == 1 ]]; then
+        log "Rebooting now. Give it 2 minutes, then check /admin and remote/screenshot.sh."
+        systemctl reboot
+        return 0
+    fi
+
+    log "Restarting the kiosk"
+    systemctl restart "$GMA_KIOSK_UNIT"
+    if check_kiosk; then
+        check_network
+    else
+        if [[ $before_ver != "$after_ver" && -n $before_ver && $auto_rollback == 1 ]]; then
+            gma_warn "the new Chromium did not come up cleanly; rolling back to $before_ver"
+            rollback_chromium "$before_ver"
+            systemctl restart "$GMA_KIOSK_UNIT"
+            check_kiosk || gma_warn "still not healthy after the rollback: look at remote/logs.sh"
+        else
+            gma_warn "the kiosk is not healthy: look at remote/logs.sh (journalctl -u $GMA_KIOSK_UNIT)"
+        fi
+    fi
+
+    if reboot_needed; then
+        log "A new kernel or firmware is installed: reboot when convenient (sudo systemctl reboot)."
+    fi
+    log "Done. Now look at the frame: /admin should show it seen in the last minute, or run remote/screenshot.sh."
+}
+
+reboot_after=0
+auto_rollback=1
+action=update
+rollback_ver=""
+while (( $# )); do
+    case $1 in
+        --reboot) reboot_after=1 ;;
+        --no-auto-rollback) auto_rollback=0 ;;
+        --rollback-chromium)
+            action=rollback
+            if [[ ${2-} != "" && ${2-} != --* ]]; then rollback_ver=$2; shift; fi
+            ;;
+        --unhold-chromium) action=unhold ;;
+        --status) action=status ;;
+        -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+        *) gma_die "unknown option: $1 (try --help)" ;;
+    esac
+    shift
+done
+
+mkdir -p "$SAVE_DIR"
+case $action in
+    update) do_update "$reboot_after" "$auto_rollback" ;;
+    rollback)
+        rollback_chromium "$rollback_ver"
+        systemctl restart "$GMA_KIOSK_UNIT"
+        check_kiosk || gma_warn "the kiosk is not healthy after the rollback: look at remote/logs.sh"
+        ;;
+    unhold) unhold_chromium ;;
+    status) show_status ;;
+esac

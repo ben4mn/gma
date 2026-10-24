@@ -1,0 +1,93 @@
+#!/bin/bash
+# Launches Chromium full screen inside cage. Run by gma-kiosk.service as the
+# kiosk user: ExecStart=/usr/bin/cage -d -s -- /usr/local/bin/gma-chromium
+#
+# The URL comes from /etc/default/gma-kiosk (root:kiosk 0640), so the pairing
+# token never sits in a unit file or the systemd environment.
+set -euo pipefail
+
+# shellcheck source=../lib/gma-kiosk/common.sh
+. /usr/local/lib/gma-kiosk/common.sh
+
+PROFILE_DIR=/var/lib/gma-kiosk/profile
+RUN_DIR=${RUNTIME_DIRECTORY:-/run/gma-kiosk}
+
+KIOSK_URL=$(gma_config_get KIOSK_URL)
+[[ -n $KIOSK_URL ]] || gma_die "KIOSK_URL is not set in $GMA_CONFIG (run install.sh --url ...)"
+ORIGIN=$(gma_origin_of "$KIOSK_URL")
+HEALTH_URL=$(gma_config_get HEALTH_URL "$ORIGIN/healthz")
+OFFLINE_URL=$(gma_config_get OFFLINE_URL "$ORIGIN/grandma/")
+
+[[ -d $PROFILE_DIR ]] || gma_die "$PROFILE_DIR is missing (systemd's StateDirectory should create it)"
+
+# A crash or power cut leaves Singleton* links naming the old pid/hostname.
+# Only this unit ever runs Chromium on this profile, so they are always stale.
+rm -f "$PROFILE_DIR"/SingletonLock "$PROFILE_DIR"/SingletonSocket "$PROFILE_DIR"/SingletonCookie
+
+# Belt and braces against restore UI: --kiosk already hides the crash bubble,
+# but mark the last exit as clean anyway.
+mark_clean_exit() {
+    local file=$1 filter=$2 tmp
+    [[ -s $file ]] || return 0
+    tmp=$(mktemp "$file.gma.XXXXXX") || return 0
+    if jq -c "$filter" "$file" >"$tmp" 2>/dev/null && [[ -s $tmp ]]; then
+        mv -f "$tmp" "$file"
+    else
+        rm -f "$tmp"
+        gma_warn "could not patch $file (left as is)"
+    fi
+}
+mark_clean_exit "$PROFILE_DIR/Default/Preferences" \
+    '.profile.exit_type = "Normal" | .profile.exited_cleanly = true'
+mark_clean_exit "$PROFILE_DIR/Local State" \
+    'if .user_experience_metrics.stability then .user_experience_metrics.stability.exited_cleanly = true else . end'
+
+server_reachable() {
+    local i
+    # At most ~15 s: the boot already waited for the network and the clock.
+    for i in 1 2 3; do
+        if curl -fsS -o /dev/null --max-time 4 "$HEALTH_URL" 2>/dev/null; then
+            return 0
+        fi
+        sleep 2
+    done
+    return 1
+}
+
+# The pairing URL (/grandma?device=...) is outside the frame service worker's
+# scope (/grandma/), so loading it offline shows Chromium's error page instead
+# of the saved photos. Offline, and once a service worker exists, start on the
+# cached frame instead. When there is no cache yet, use the pairing URL and
+# leave a marker so gma-netwatch restarts the kiosk once the server answers.
+START_URL=$KIOSK_URL
+rm -f "$RUN_DIR/reload-when-online" 2>/dev/null || true
+if ! server_reachable; then
+    if [[ -d "$PROFILE_DIR/Default/Service Worker" ]]; then
+        gma_log "server unreachable at launch: starting on the cached frame ($OFFLINE_URL)"
+        START_URL=$OFFLINE_URL
+    else
+        gma_log "server unreachable at launch and nothing cached yet: will reload when it answers"
+        if [[ -d $RUN_DIR ]]; then
+            : >"$RUN_DIR/reload-when-online" || true
+        fi
+    fi
+fi
+
+gma_log "starting Chromium on ${START_URL%%\?*}"
+
+# The verified flag set (docs/research/phase1-research.json, pi-kiosk). Do not
+# add --disable-infobars: it no longer exists; --kiosk does that job. Translate
+# is off through the TranslateEnabled policy, not a feature flag.
+# The start URL (the pairing token included) is in Chromium's command line,
+# which any local account can read with ps: never paste ps output from here.
+exec /usr/bin/chromium \
+    --kiosk \
+    --ozone-platform=wayland \
+    --noerrdialogs \
+    --no-first-run \
+    --password-store=basic \
+    --disable-pinch \
+    --disable-features=OverscrollHistoryNavigation \
+    --autoplay-policy=no-user-gesture-required \
+    --user-data-dir="$PROFILE_DIR" \
+    "$START_URL"

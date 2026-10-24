@@ -1,0 +1,344 @@
+{
+ "research": {
+  "facts": [
+   {
+    "claim": "No web API exposes Face ID, Touch ID or a fingerprint reader directly. The only way is WebAuthn: during a passkey create() or get(), the device runs its own screen-unlock check (biometric, falling back to the device passcode, PIN or pattern). The server only ever receives a 'user verified' (UV) flag; no biometric data reaches it.",
+    "sources": [
+     "https://www.w3.org/TR/webauthn-3/",
+     "https://passkeys.dev/docs/reference/ios/",
+     "https://passkeys.dev/docs/reference/android/"
+    ],
+    "confidence": "high",
+    "impact": "'Biometrics like a passcode' means passkeys. The prompt the relative sees is the phone's own Face ID or fingerprint sheet.",
+    "detail": "WebAuthn Level 3 became a W3C Recommendation on 25 Aug 2026. On iOS, both creating and using a passkey ask for Face ID or Touch ID when one is set up, and fall back to the passcode otherwise. On Android (Chrome 120+), 'required' and 'preferred' behave the same: biometric, else the device PIN or pattern."
+   },
+   {
+    "claim": "On iOS a passkey is saved to Apple Passwords (iCloud Keychain), which is system-wide and keyed by RP ID, not by the browser's cookie jar. Apple's iOS 27 guide says 'To use passkeys, iCloud Keychain and two-factor authentication must be turned on.' Since iOS 17, third-party providers such as 1Password, or Google Password Manager through Chrome set as an autofill provider, can store passkeys instead.",
+    "sources": [
+     "https://support.apple.com/guide/iphone/use-passkeys-to-sign-in-to-websites-and-apps-iphf538ea8d0/ios",
+     "https://developers.google.com/identity/passkeys/supported-environments",
+     "https://passkeys.dev/docs/reference/ios/"
+    ],
+    "confidence": "high",
+    "impact": "Relatives with iCloud Keychain off (and no third-party provider) cannot save a passkey. Email codes must stay as the fallback.",
+    "detail": "If iCloud Keychain is off, saving fails ('To save a passkey, you need to enable iCloud Keychain'). Leaving for Settings to turn it on cancels the request in progress, so the user has to start again (1Password community, Juspay troubleshooting). Synced passkeys need iOS 16 or later. Credentials made on iOS 15 or earlier stay device-bound 'legacy' credentials for the life of that device."
+   },
+   {
+    "claim": "A passkey created in Safari for the site should also work inside the installed Home Screen web app, and the other way round, even though cookies and storage are separate. I found no Apple document that says this outright. The evidence: passkeys live in the system store, Chrome on iOS uses the same iCloud Keychain passkeys, and an Apple forum report (iOS 18.6.2, Feb 2026) shows Safari-created passkeys for Amazon, GitHub and Adobe offered when those pages were launched from a Home Screen shortcut.",
+    "sources": [
+     "https://developer.apple.com/forums/thread/815784",
+     "https://developers.google.com/identity/passkeys/supported-environments",
+     "https://support.apple.com/guide/iphone/use-passkeys-to-sign-in-to-websites-and-apps-iphf538ea8d0/ios"
+    ],
+    "confidence": "medium",
+    "impact": "This allows an onboarding where the passkey is made in Safari straight after the invite link, and the first sign-in inside the installed app is one Face ID tap instead of typing a 6-digit code. Test it on a real iPhone (iOS 18, 26 and 27) in Phase 2 before relying on it.",
+    "detail": "That forum report also says launching from the Home Screen made passkey glitches more likely: the prompt appearing twice, sign-in stalling, or the field falling back to password AutoFill. It had no Apple reply."
+   },
+   {
+    "claim": "WebAuthn's modal create() and get() can be called inside an installed iOS Home Screen web app, but the autofill-style passkey UI (conditional mediation) is unreliable there. One developer found that adding autocomplete='username webauthn' made the Passwords key appear in a home-screen app, and tapping it froze the app (fix and revert both 19 Oct 2026). The Apple forum thread above reports duplicate prompts and stalls when launched from the Home Screen.",
+    "sources": [
+     "https://github.com/IDEKENTERPRISES/pokecollector/pull/24",
+     "https://developer.apple.com/forums/thread/815784",
+     "https://webkit.org/blog/17333/webkit-features-in-safari-26-0/",
+     "https://webkit.org/blog/18325/webkit-features-for-safari-27-0/"
+    ],
+    "confidence": "medium",
+    "impact": "Use a single big 'Sign in with Face ID' button that calls a modal get(). Don't use autofill or conditional UI in the installed app.",
+    "detail": "Neither the Safari 26.0 nor the Safari 27.0 release notes list any WebAuthn fix for Home Screen apps. Safari 26 changed installation: 'By default, every website added to the Home Screen opens as a web app', with zero installability requirements. Safari 27 (17 Sep 2026) now passes the AbortSignal reason through create()/get() (174220589), so error names can differ between versions."
+   },
+   {
+    "claim": "Safari's user-gesture rules for WebAuthn changed over time. iOS 14\u201315 needed a user gesture for every call. iOS 16 to 17.3 allowed one get() per page load without a gesture. From iOS 17.4 the gesture rule was reportedly replaced by undisclosed rate limiting.",
+    "sources": [
+     "https://www.corbado.com/blog/safari-webauthn-user-activated-events",
+     "https://webkit.org/blog/11312/meet-face-id-and-touch-id-for-the-web/",
+     "https://bugs.webkit.org/show_bug.cgi?id=213595"
+    ],
+    "confidence": "medium",
+    "impact": "Always call create()/get() directly from a tap handler. Fetch the challenge before the tap (when the screen renders) so the call isn't delayed by a network round trip. Never fire automatically on app launch.",
+    "detail": "The 17.4 change comes from Corbado's write-up; WebKit's 17.4 notes don't mention it. WebKit bug 213595 shows that fetching a challenge inside the gesture used to break the gesture chain."
+   },
+   {
+    "claim": "On Android, Chrome on Android 9 or later creates and uses passkeys stored in Google Password Manager. On Android 14 or later, users can pick a third-party provider in System Settings (some OEMs don't support this). An installed PWA (WebAPK) runs in the same Chrome profile, sharing cookies, storage and the passkey provider with the browser.",
+    "sources": [
+     "https://developers.google.com/identity/passkeys/supported-environments",
+     "https://passkeys.dev/docs/reference/android/",
+     "https://web.dev/articles/webapks",
+     "https://developer.android.com/identity/passkeys"
+    ],
+    "confidence": "high",
+    "impact": "Android is the easy case: the same flow works in Chrome and in the installed app. Phones older than Android 9 get email codes only.",
+    "detail": "A screen lock is required: with no PIN or pattern set, Chrome asks the user to set one up (or offers a security key at creation). Embedded WebViews don't support WebAuthn directly. Samsung Internet is Chromium-based; Samsung Pass passkeys need One UI 6+, stay on the device, and work in Samsung Internet. I found no primary source on how Samsung Internet behaves in installed-PWA mode."
+   },
+   {
+    "claim": "Signal API: signalUnknownCredential, signalAllAcceptedCredentials and signalCurrentUserDetails are in Chrome/Edge 132+ and Safari 26.0+ (iOS 26), and not in Firefox. Google Password Manager acts on the signals. Apple says credential managers delete any passkey not in the accepted list.",
+    "sources": [
+     "https://webkit.org/blog/17333/webkit-features-in-safari-26-0/",
+     "https://developer.chrome.com/docs/identity/webauthn-signal-api",
+     "https://github.com/mdn/browser-compat-data/blob/main/api/PublicKeyCredential.json",
+     "https://developer.apple.com/videos/play/wwdc2025/279/",
+     "https://www.w3.org/TR/webauthn-3/"
+    ],
+    "confidence": "high",
+    "impact": "When Ben removes a relative or a device, the server deletes the credential (that is the real revocation). The signals are cosmetic: they stop a dead passkey from being offered, and only on iOS 26+ or Chrome 132+. Feature-detect before calling.",
+    "detail": "signalUnknownCredential({rpId, credentialId}) is meant for when a sign-in fails because the server doesn't know the credential, and needs no session. signalAllAcceptedCredentials({rpId, userId, allAcceptedCredentialIds}) is recommended after a deletion and on every sign-in. The spec warns that leaving out a valid ID can hide or remove that passkey, maybe for good. An empty list can hide all of a user's passkeys."
+   },
+   {
+    "claim": "getClientCapabilities() is in Safari 17.4+, Chrome 133+ and Firefox 135+. isConditionalMediationAvailable() is in Safari 16+ and Chrome 108+, but always returns false in Android WebView. Conditional create (automatic passkey upgrade) is in Safari 18+ and Chrome 136+, but it needs a saved password for that account in the password manager.",
+    "sources": [
+     "https://github.com/mdn/browser-compat-data/blob/main/api/PublicKeyCredential.json",
+     "https://webkit.org/blog/15063/webkit-features-in-safari-17-4/",
+     "https://developer.apple.com/forums/thread/773103",
+     "https://developer.chrome.com/blog/io26-web-identity"
+    ],
+    "confidence": "high",
+    "impact": "Conditional create will never fire here because there are no passwords. Use an explicit 'Set up Face ID' button. getClientCapabilities is missing on iOS 16 to 17.3, so detection must fall back to just trying.",
+    "detail": "An Apple engineer's requirements for automatic upgrades: the RP ID matches the saved password's domain, no passkey exists yet, iCloud Keychain sync is on (loosened in iOS 18.4). Chrome's 'immediate' UI mode shipped in Chrome 149 as uiMode: 'immediate' (the trial's mediation:'immediate' no longer works). I found nothing showing Safari support. It's optional at most, for Android."
+   },
+   {
+    "claim": "The RP ID must equal the page's host, or be a registrable-domain suffix of it. From gma.4mn.org you can choose 'gma.4mn.org' or '4mn.org'. Related-origin requests (/.well-known/webauthn) are only needed across different registrable domains, so they don't apply here.",
+    "sources": [
+     "https://www.w3.org/TR/webauthn-3/",
+     "https://web.dev/articles/webauthn-related-origin-requests"
+    ],
+    "confidence": "high",
+    "impact": "Choose rpID 'gma.4mn.org'. It also covers a staging host at draft.gma.4mn.org (a subdomain of it) but keeps other *.4mn.org sites from requesting these passkeys. Changing the RP ID later means everyone re-enrolls.",
+    "detail": "With '4mn.org', any other 4mn.org subdomain Ben runs could use the family's passkeys. verifyRegistrationResponse/verifyAuthenticationResponse must expect origin 'https://gma.4mn.org' (plus the draft origin if staging shares the RP ID). Cloudflare Tunnel doesn't change the browser-reported origin."
+   },
+   {
+    "claim": "Recommended options: attestation 'none' (the spec default; SimpleWebAuthn recommends it), residentKey 'required' (discoverable passkeys for usernameless sign-in), userVerification 'required', and user.id as random bytes rather than an email. Safari ignores the residentKey option, but Apple's platform authenticator always creates discoverable credentials.",
+    "sources": [
+     "https://www.w3.org/TR/webauthn-3/",
+     "https://simplewebauthn.dev/docs/packages/server",
+     "https://webkit.org/blog/11312/meet-face-id-and-touch-id-for-the-web/",
+     "https://github.com/mdn/browser-compat-data/blob/main/api/CredentialsContainer.json",
+     "https://passkeys.dev/docs/reference/known-issues/"
+    ],
+    "confidence": "high",
+    "impact": "Usernameless 'Sign in with Face ID' works on iPhone and Android. 'required' plus requireUserVerification on the server makes the passkey act as the screen-lock check Ben wants.",
+    "detail": "SimpleWebAuthn defaults residentKey and userVerification to 'preferred', so set both explicitly. Caveat (passkeys.dev, Apr 2026): the 1Password, Bitwarden, Proton Pass and KeePassXC browser extensions set UV=true without actually verifying; 1Password's native iOS/Android app does it properly. Safari supports neither credProps nor 'hints'."
+   },
+   {
+    "claim": "An 'app lock' (a fresh WebAuthn assertion each time the app opens) can be built, but only as an in-app lock screen with an 'Unlock with Face ID' button. iOS's own 'Require Face ID' app lock doesn't apply to Home Screen web apps.",
+    "sources": [
+     "https://intercom.help/progressier/en/articles/11649686-can-you-use-require-face-id-to-limit-access-to-an-installed-pwa-on-ios",
+     "https://www.corbado.com/blog/safari-webauthn-user-activated-events",
+     "https://webkit.org/blog/10218/full-third-party-cookie-blocking-and-more/"
+    ],
+    "confidence": "medium",
+    "impact": "Cost: every open becomes a tap, the passkey sheet, Face ID and a server round trip, and anyone on email codes without a passkey would be locked out. Default it off and rely on a long server-side session. Offer an optional per-user toggle and a step-up assertion for Ben's admin actions.",
+    "detail": "The Progressier note on the iOS lock is from June 2025 and isn't re-verified for iOS 26/27. WebKit says Home Screen web apps keep their own days-of-use counter, and 'We do not expect the first-party in such a web application to have its website data deleted', so a long-lived HttpOnly session cookie in the web app's jar is viable."
+   },
+   {
+    "claim": "@simplewebauthn/server 14.0.3 (25 Sep 2026) and @simplewebauthn/browser 14.0.0 (2 Sep 2026) are the current versions: MIT, about 4.2M weekly downloads each, repo pushed 11 Oct 2026. Both ship ESM and CommonJS through conditional exports. v14 raised the minimum to Node 22 LTS and added sendSignal(), browserSupportsPasskeys(), getBrowserCapabilities() and ML-DSA support.",
+    "sources": [
+     "https://registry.npmjs.org/@simplewebauthn/server",
+     "https://registry.npmjs.org/@simplewebauthn/browser",
+     "https://github.com/MasterKale/SimpleWebAuthn/releases",
+     "https://simplewebauthn.dev/docs/packages/server",
+     "https://simplewebauthn.dev/docs/packages/browser"
+    ],
+    "confidence": "high",
+    "impact": "Use this library on Node 22 or 24 with Fastify. The server side is plain functions, so no Fastify plugin is needed.",
+    "detail": "The npm 'engines' field still says >=20, but the docs and release notes say Node 22+. 14.0.2 fixed a moderate CRL/attestation advisory (GHSA-2g3p-m8c9-hhwh), which doesn't matter with attestation 'none'. Alternatives: fido2-lib 4.0.0 (Oct 2026, Node 22+, about 38K downloads a week, lower level) and @passwordless-id/webauthn 2.4.1 (about 34K a week). @github/webauthn-json is deprecated in favour of the native parse*FromJSON methods, and @oslojs/webauthn is marked unsupported."
+   },
+   {
+    "claim": "Fallbacks and revocation: one user can hold several passkeys (one per ecosystem or device, kept out of duplicates with excludeCredentials). Revocation means deleting the credential row and the user's sessions on the server. Recovery stays on the email code. An Android phone below 9, an iPhone stuck on iOS 15 (iPhone 6s/7), iCloud Keychain off, or a shared iPad without the relative's own Apple Account all just keep using email codes.",
+    "sources": [
+     "https://simplewebauthn.dev/docs/packages/server",
+     "https://passkeys.dev/docs/reference/ios/",
+     "https://developers.google.com/identity/passkeys/supported-environments",
+     "https://github.com/passkeydeveloper/passkey-authenticator-aaguids"
+    ],
+    "confidence": "high",
+    "impact": "The passkey sits on top of the email-code path and never replaces it. Settings shows each passkey with a provider name and a Remove button.",
+    "detail": "Store per credential: id, publicKey, counter, transports, deviceType, backedUp, aaguid, label, created and last-used dates. Label by AAGUID: Apple Passwords fbfc3007-154e-4ecc-8c0b-6e020557d7bd, Google Password Manager ea9b8d66-4d01-1d21-3ce4-b6b48cb575d4, Samsung Pass 53414d53-554e-4700-0000-000000000000, 1Password bada5566-a7aa-401f-bd96-45619a55120d. Fall back to the user agent ('iPhone') when the AAGUID is all zeros. Synced passkeys report counter 0, so don't fail on a counter that doesn't increase. On a shared Apple Account iPad, every relative's passkey lands in the same Passwords app; the picker tells them apart by user.name/displayName."
+   }
+  ],
+  "gotchas": [
+   "Never start get()/create() automatically on launch or on visibilitychange. Call it from a tap, with the options fetched beforehand. iOS 16 to 17.3 allowed only one gesture-free get() per page load, 17.4+ rate-limits, and Chromium rejects requests from a document that isn't focused.",
+   "Don't use conditional mediation or autocomplete='webauthn' in the installed iOS app: there are reports of the app freezing and of double prompts. Use a modal button instead. Never run a conditional get() and a modal get() at the same time; cancel with WebAuthnAbortService.",
+   "NotAllowedError covers user cancel, timeout, no passkey on the device, iCloud Keychain off, and a missing gesture alike. Safari 27 also changed which error names come back. Show one gentle 'That didn't work: use an email code or try again' and log the details on the server.",
+   "If a relative leaves the app for Settings to turn on iCloud Keychain, the request is cancelled and the web app may reload. Restart the setup screen when they come back.",
+   "isUserVerifyingPlatformAuthenticatorAvailable() returns true on iOS even with no Face ID. It can't detect iCloud Keychain being off, and getClientCapabilities is missing before Safari 17.4. Offer the button and handle failure rather than trying to predict it.",
+   "The RP ID ('gma.4mn.org') can't be changed later without everyone re-enrolling. The Passwords app also shows it to the relative, so make rp.name friendly ('Grandma's Feed').",
+   "Set residentKey:'required' and userVerification:'required' explicitly (SimpleWebAuthn defaults both to 'preferred'), and set requireUserVerification:true when verifying. Some password-manager browser extensions report UV without actually verifying.",
+   "Synced passkeys (Apple, Google) keep a counter of 0. Don't treat a counter that doesn't increase as cloning.",
+   "signalAllAcceptedCredentials with a wrong or empty list can hide or delete a relative's valid passkeys for good. Only call it with the full current list from the database, and feature-detect, since it needs iOS 26+ or Chrome 132+ and Firefox has none.",
+   "Signals don't revoke anything. Revocation means deleting the credential rows and every session on the server.",
+   "SimpleWebAuthn v14 needs Node 22+ even though npm 'engines' still says >=20, and v14 lists ML-DSA-44 first in its algorithm order. Authenticators that don't support it (all of today's phones) fall back to ES256/RS256, so leave the default list alone.",
+   "Store the challenge on the server (single use, about 5-minute expiry) tied to a pre-auth cookie or record, never on the client. expectedOrigin is the public https origin, not the Fastify origin behind Cloudflare Tunnel.",
+   "Older iPhones: an iPhone 6s/7 tops out at iOS 15 (device-bound legacy credentials, not synced), and anything on iOS 16+ gets synced passkeys. The Signal API needs iOS 26+. Plan for a mixed family.",
+   "Grandma's Pi kiosk shouldn't use passkeys at all (Chromium on Pi OS has no platform authenticator). Give it a device token that Ben provisions."
+  ],
+  "recommended_flow": "1. Invite (in Safari, once): the invite link opens in Safari, and its one-time token is the email proof, so the relative is signed in there without typing a code. The page then shows 'Next time, just use Face ID' (the label adapts: Face ID / Touch ID / fingerprint / screen lock). One tap calls startRegistration({optionsJSON}), with the options fetched when the screen rendered: rp {id:'gma.4mn.org', name:\"Grandma's Feed\"}, user {id: 32 random bytes, name: email, displayName: full name}, attestationType 'none', authenticatorSelection {residentKey:'required', userVerification:'required'}, excludeCredentials = their existing passkeys. Next comes the Add to Home Screen walkthrough. 'Not now' is always offered.\n2. First open of the installed app: if the cookie copied at install signed them in, they're done. If not, the sign-in screen shows a big 'Sign in with Face ID' button (primary) and 'Email me a code instead' (secondary). The tap calls startAuthentication({optionsJSON}) with allowCredentials empty (discoverable) and userVerification 'required'. No autofill or conditional UI.\n3. Code-only path: anyone who signed in with an email code and has no passkey on this device sees the same setup prompt after sign-in, at most 3 times and then never again.\n4. Server (Fastify + @simplewebauthn/server 14): challenges stored in Postgres or memory, single use, 5-minute expiry, tied to a pre-auth cookie. Verification uses expectedOrigin 'https://gma.4mn.org', expectedRPID 'gma.4mn.org' and requireUserVerification:true. Store the credential row (id, publicKey, counter, transports, deviceType, backedUp, aaguid, label, created/last used). Unknown credential returns 404 {code:'unknown_credential', credentialId}; the client then calls sendSignal('unknownCredential') where supported and switches to the email-code path. On success, issue a long-lived server-side session (HttpOnly Secure SameSite=Lax cookie, sliding renewal, e.g. 1 year), then call signalAllAcceptedCredentials and signalCurrentUserDetails with the full list from the database, feature-detected.\n5. Settings > 'Face ID sign-in': the list of passkeys labelled by AAGUID (Apple Passwords / Google Password Manager / Samsung Pass / 1Password), with dates, 'Add another device' and 'Remove' (which deletes the row and calls signalAllAcceptedCredentials).\n6. Ben removes a relative: delete their credentials, sessions and invites in one transaction. Their next request gets a 401, and a later Face ID attempt hits the unknown-credential path, which hides the passkey on iOS 26+ / Chrome 132+.\n7. Recovery and fallback: the email code is always available (6 digits, 10-minute expiry, 5 tries, rate-limited per email and IP). This covers a lost phone, iCloud Keychain off, Android below 9, iOS 15, or a shared iPad without their own Apple Account. The kiosk Pi uses a device token.\n8. No app lock by default. Offer an optional per-user 'Ask for Face ID when I open the app' toggle (re-lock after 15+ minutes in the background, unlocked by a tapped button), and require a fresh assertion (step-up) for Ben's admin actions such as removing someone.\n9. Phase 2 device tests before shipping: a passkey made in Safari working in the installed app and the other way round, on iOS 18, 26 and 27, plus Android Chrome and its WebAPK, plus iCloud Keychain off.",
+  "library": "@simplewebauthn/server 14.0.3 (25 Sep 2026) and @simplewebauthn/browser 14.0.0 (2 Sep 2026). Both are MIT-licensed, ship ESM and CommonJS through conditional exports, get about 4.2M weekly downloads each, and are actively maintained (repo pushed 11 Oct 2026). v14 requires Node 22 LTS or newer per its docs and release notes, although npm 'engines' still says >=20, so run Node 22 or 24. The browser package provides startRegistration/startAuthentication({optionsJSON}), sendSignal(), browserSupportsPasskeys(), getBrowserCapabilities() and WebAuthnAbortService. The server side is plain functions, so no Fastify plugin is needed; pair it with @fastify/session 11.1.5 or your own session table. Alternatives: fido2-lib 4.0.0 (Node 22+, lower level, about 38K downloads a week) and @passwordless-id/webauthn 2.4.1. Avoid @github/webauthn-json (deprecated) and @oslojs/webauthn (marked unsupported)."
+ },
+ "check": {
+  "checks": [
+   {
+    "claim": "No web API exposes Face ID / Touch ID / fingerprint directly. Only WebAuthn does, through the device's screen-unlock check, and the server gets only a UV flag. WebAuthn L3 became a Recommendation on 25 Aug 2026. On iOS, passkey create and get use Face ID/Touch ID, falling back to the passcode. On Android Chrome 120+, 'required' and 'preferred' behave the same.",
+    "verdict": "confirmed",
+    "correction": "The spec header reads 'W3C Recommendation, 25 August 2026' (REC-webauthn-3-20260825). passkeys.dev iOS (last updated 31 Oct 2025): 'Both passkey creation and authentication ask for Touch ID or Face ID if one is configured', and fall back to the passcode otherwise. passkeys.dev Android (updated 29 Aug 2026) confirms required and preferred behave the same on Chrome 120. One nuance: on an Android phone with no screen lock at all, Chrome 120 asks for an external security key when creating a passkey, and only asks the user to set up a PIN or pattern when signing in. The spec's ClientCapability enum has no value that names the biometric type, so a page cannot tell Face ID from Touch ID from a fingerprint reader.",
+    "sources": [
+     "https://www.w3.org/TR/webauthn-3/",
+     "https://passkeys.dev/docs/reference/ios/",
+     "https://passkeys.dev/docs/reference/android/"
+    ]
+   },
+   {
+    "claim": "iOS saves passkeys to Apple Passwords / iCloud Keychain, keyed by RP ID. Apple's guide says iCloud Keychain and 2FA must be on. Third-party providers can store passkeys since iOS 17. Saving fails with iCloud Keychain off, and going to Settings cancels the request. Synced passkeys need iOS 16+. Credentials made on iOS 15 or earlier stay device-bound.",
+    "verdict": "partly",
+    "correction": "Confirmed verbatim in Apple's iPhone guide (version selector defaults to iOS 27): 'Note: To use passkeys, iCloud Keychain and two-factor authentication must be turned on.' Confirmed: the iOS 16+ platform authenticator is Apple Passwords (passkeys.dev); iOS 15 credentials 'will remain available for the lifetime of the device'; Google says Chrome can act as the autofill provider from iOS 17. Weakly sourced: the 'cancels the request when you leave for Settings' detail comes from a 1Password community thread about 1Password's own sign-up flow, not Safari or a web app. Apple's forums describe a prompt to turn on iCloud Keychain with a link to Settings. No Apple document describes the cancellation. If the user has a third-party provider enabled, saving can succeed even with iCloud Keychain off. Corbado's analysis says Safari reports both user-cancel and failure as NotAllowedError, so the app cannot tell why it failed.",
+    "sources": [
+     "https://support.apple.com/guide/iphone/use-passkeys-to-sign-in-to-websites-and-apps-iphf538ea8d0/ios",
+     "https://passkeys.dev/docs/reference/ios/",
+     "https://developers.google.com/identity/passkeys/supported-environments",
+     "https://www.1password.community/discussions/1password/failed-to-save-passkey/147421",
+     "https://www.corbado.com/blog/apple-passkey-error-codes"
+    ]
+   },
+   {
+    "claim": "A passkey made in Safari should work in the installed Home Screen web app and vice versa. The evidence is the system-wide store, Chrome on iOS using iCloud Keychain, and an Apple forum report (iOS 18.6.2, Feb 2026) showing Safari-created passkeys offered from Home Screen shortcuts, with glitches more likely there.",
+    "verdict": "partly",
+    "correction": "The conclusion is plausible, but the evidence is overstated. The forum post (iPhone SE, iOS 18.6.2, 0 replies) never says where the passkeys were created. It says 'shortcut' and never confirms standalone mode. Before iOS 26, a Home Screen icon only opened as a web app if the site declared it: GitHub's manifest has display 'standalone', while Amazon's sign-in page showed no manifest or capable meta tag. The post also says the glitches 'may also occur when opening the same pages directly in a standard browser window'. I found no primary source (Apple, WebKit release notes, WebKit Bugzilla) that confirms or denies passkeys being shared between Safari and Home Screen web apps. This stays a device test. Google confirms Chrome on iOS stores passkeys in iCloud Keychain by default.",
+    "sources": [
+     "https://developer.apple.com/forums/thread/815784",
+     "https://github.com/manifest.json",
+     "https://developers.google.com/identity/passkeys/supported-environments",
+     "https://support.apple.com/guide/iphone/use-passkeys-to-sign-in-to-websites-and-apps-iphf538ea8d0/ios"
+    ]
+   },
+   {
+    "claim": "Modal create()/get() work in an installed iOS web app, but autofill-style conditional mediation is unreliable there. Evidence: the pokecollector PR, where autocomplete='username webauthn' froze the app (merged and reverted 19 Oct 2026), and the forum thread. Neither Safari 26 nor 27 notes list a fix for Home Screen apps. Safari 26 opens every Home Screen site as a web app. Safari 27 (17 Sep 2026) passes the AbortSignal reason through (174220589).",
+    "verdict": "partly",
+    "correction": "The release-note facts check out. Safari 26.0: 'By default, every website added to the Home Screen opens as a web app' and 'there are now zero requirements for \"installability\"'; users can switch off 'Open as Web App'. The Safari 27.0 post is dated Sep 17, 2026 and lists 'navigator.credentials.create() and navigator.credentials.get() discarded the AbortSignal reason\u2026 (174220589)', plus a Credential Management get() fix (173918198). Neither lists a Home Screen WebAuthn fix. The pokecollector evidence is mischaracterized: PR #24 says the app is password-only and offers no passkeys ('this app offers none'). What froze was the iOS AutoFill Passwords key, and no iOS version was given. So it shows AutoFill is flaky in Home Screen apps, not that conditional mediation is. No primary source confirms that modal create()/get() work in standalone mode either; it is assumed. Safari 18.0 also fixed create() rejecting after an aborted conditional-UI request, which is one more reason to avoid conditional UI on older iOS.",
+    "sources": [
+     "https://github.com/IDEKENTERPRISES/pokecollector/pull/24",
+     "https://github.com/IDEKENTERPRISES/pokecollector/pull/26",
+     "https://webkit.org/blog/17333/webkit-features-in-safari-26-0/",
+     "https://webkit.org/blog/18325/webkit-features-for-safari-27-0/",
+     "https://webkit.org/blog/15865/webkit-features-in-safari-18-0/"
+    ]
+   },
+   {
+    "claim": "Safari's gesture rules: iOS 14\u201315 needed a gesture for every call; iOS 16\u201317.3 allowed one get() per page load without one; 17.4 reportedly replaced this with undisclosed rate limiting (Corbado, not in WebKit notes); WebKit bug 213595 shows that fetching a challenge inside the gesture broke the chain.",
+    "verdict": "confirmed",
+    "correction": "Corbado (published 14 May 2024, modified 28 Aug 2026): 'Starting with iOS 17.4 the user gesture requirements were completely lifted and replaced with rate-limiting'; Apple has published no details. The WebKit 17.4 post only mentions getClientCapabilities(). Bug 213595 was fixed in r264528 (July 2020) for XHR only; fetch was tracked separately in bug 214444, and long round trips (~800 ms) still failed in 2021. Open WebKit bug 273712 (Critical, NEW) reports create()/get() hanging on 17.4\u201318.0, with reporters suspecting the 17.4 rate limiter (unconfirmed). Prefetching options when the screen renders, as the flow does, is the right pattern.",
+    "sources": [
+     "https://www.corbado.com/blog/safari-webauthn-user-activated-events",
+     "https://webkit.org/blog/15063/webkit-features-in-safari-17-4/",
+     "https://bugs.webkit.org/show_bug.cgi?id=213595",
+     "https://bugs.webkit.org/show_bug.cgi?id=273712"
+    ]
+   },
+   {
+    "claim": "Android 9+ Chrome uses Google Password Manager passkeys; Android 14+ allows third-party providers (not on some OEMs); a WebAPK shares Chrome's profile, cookies and storage; a screen lock is required; embedded WebViews lack WebAuthn; Samsung Pass needs One UI 6+, stays on the device and works in Samsung Internet.",
+    "verdict": "confirmed",
+    "correction": "Confirmed by Google (supported-environments, last updated 2025-05-19), passkeys.dev Android (29 Aug 2026), and Samsung (updated 12 Nov 2025: 'stored only on your Galaxy device', 'only works with Samsung Internet and other supported apps'). One precise point: with no lock, Chrome 120 asks for a security key at creation and asks the user to set up a PIN or pattern at sign-in. An older relative will likely just fail at that security-key prompt. The WebAPK source is from 2017 ('Cookies are shared\u2026 any client side storage is accessible'), so it is old but unchallenged. System WebViews and Custom Tabs, and AuthTab on Chrome 137+, do support WebAuthn. Samsung Internet's installed-PWA behaviour is still unsourced.",
+    "sources": [
+     "https://developers.google.com/identity/passkeys/supported-environments",
+     "https://passkeys.dev/docs/reference/android/",
+     "https://web.dev/articles/webapks",
+     "https://www.samsung.com/au/support/apps-services/how-to-create-and-use-a-passkey-in-samsung-pass/"
+    ]
+   },
+   {
+    "claim": "The Signal API is in Chrome/Edge 132+ and Safari 26+, not Firefox; GPM acts on signals; Apple says managers delete passkeys missing from the accepted list; signalUnknownCredential needs no session; call signalAllAcceptedCredentials after deletions and on every sign-in; omitting an ID can hide or remove a passkey, possibly for good; an empty list hides everything.",
+    "verdict": "confirmed",
+    "correction": "MDN BCD shows chrome 132, safari 26, firefox false for all three methods. The spec says: 'Credentials not present in allAcceptedCredentialIds will be removed or hidden, potentially irreversibly.' Chrome warns that 'passing an empty list can hide all of the user's passkeys.' WWDC25 session 279: 'credential managers will delete any passkeys they have that aren't in the set'. Chrome describes Google's behaviour as hiding, so the passkey can come back; Apple's is deletion, so an empty or short list on iOS may be permanent. Caveats: Chrome says GPM does not apply signalCurrentUserDetails if the user edited the name inside GPM, and its compatibility note ('Safari \u2026 not yet implemented', Nov 2024) is out of date. WWDC25 never mentions signalUnknownCredential, so the flow's 'hides the passkey on iOS 26+' (step 6) is not documented by Apple.",
+    "sources": [
+     "https://github.com/mdn/browser-compat-data/blob/main/api/PublicKeyCredential.json",
+     "https://www.w3.org/TR/webauthn-3/",
+     "https://developer.chrome.com/docs/identity/webauthn-signal-api",
+     "https://developer.apple.com/videos/play/wwdc2025/279/",
+     "https://webkit.org/blog/17333/webkit-features-in-safari-26-0/"
+    ]
+   },
+   {
+    "claim": "getClientCapabilities is in Safari 17.4+, Chrome 133+ and Firefox 135+; isConditionalMediationAvailable is in Safari 16+ and Chrome 108+ and always false in Android WebView; conditional create is in Safari 18+ and Chrome 136+ and needs a saved password; the Apple engineer's upgrade requirements; Chrome 149 'immediate' uiMode.",
+    "verdict": "partly",
+    "correction": "BCD confirms the getClientCapabilities and isConditionalMediationAvailable versions; for Android WebView 131 it notes that isConditionalMediationAvailable() 'always returns false'. BCD does not track conditional create, so the citation is wrong. The WebKit Safari 18.0 post confirms 'mediation=conditional for web authentication credential creation'. Chrome 136 conditional create was desktop-only at launch, with Android to follow. The Apple engineer's list (accepted answer, Apr 2025: matching RPID, no existing passkey, iCloud Keychain sync, 18.4 'loosened some of the requirements') is confirmed. Chrome I/O 2026 confirms 'From Chrome 149, Immediate UI Mode is available' with uiMode:'immediate'. Not verified: that mediation:'immediate' no longer works, and that the feature is Android-only. The example call also passes password:true. Conditional create does not apply to this app at all, because there are no passwords to upgrade.",
+    "sources": [
+     "https://github.com/mdn/browser-compat-data/blob/main/api/PublicKeyCredential.json",
+     "https://webkit.org/blog/15063/webkit-features-in-safari-17-4/",
+     "https://webkit.org/blog/15865/webkit-features-in-safari-18-0/",
+     "https://developer.chrome.com/blog/passkey-automatic-upgrades",
+     "https://developer.apple.com/forums/thread/773103",
+     "https://developer.chrome.com/blog/io26-web-identity"
+    ]
+   },
+   {
+    "claim": "The RP ID must equal the host or be a registrable-domain suffix of it, so 'gma.4mn.org' or '4mn.org'. Related origins are not needed. '4mn.org' would expose passkeys to other subdomains. Expect the origin 'https://gma.4mn.org' (plus draft). Cloudflare Tunnel does not change the origin.",
+    "verdict": "confirmed",
+    "correction": "The spec says: 'The RP ID must be equal to the origin's effective domain, or a registrable domain suffix of the origin's effective domain.' A missing consequence: draft.gma.4mn.org is a subdomain of gma.4mn.org, so a staging site can legally request assertions for RP ID 'gma.4mn.org'. Don't add the draft origin to production's expectedOrigin. Give staging its own RP ID ('draft.gma.4mn.org') so staging code can never produce assertions production would accept.",
+    "sources": [
+     "https://www.w3.org/TR/webauthn-3/",
+     "https://web.dev/articles/webauthn-related-origin-requests"
+    ]
+   },
+   {
+    "claim": "Options: attestation 'none' (the spec default), residentKey 'required', userVerification 'required', random user.id; Safari ignores residentKey; SimpleWebAuthn defaults to 'preferred'; extension providers fake UV (passkeys.dev, Apr 2026); Safari lacks credProps and hints.",
+    "verdict": "confirmed",
+    "correction": "Spec IDL: attestation = \"none\". The SimpleWebAuthn docs mark residentKey/userVerification 'preferred' as '// Defaults' and recommend 'none' 'for smoother UX'. BCD shows Safari = false for residentKey, requireResidentKey, credProps and hints. The passkeys.dev known-issues list (updated 9 Apr 2026) is longer than the claim says: Okta Personal (extension) also fakes UV, and so do the native Proton Pass and Strongbox apps; only 1Password native and Okta Personal native pass. The spec also deprecates rp.name 'because many clients do not display it', so relatives will see 'gma.4mn.org', not \"Grandma's Feed\". user.name is 'the primary value displayed' in the account picker.",
+    "sources": [
+     "https://www.w3.org/TR/webauthn-3/",
+     "https://simplewebauthn.dev/docs/packages/server",
+     "https://github.com/mdn/browser-compat-data/blob/main/api/CredentialsContainer.json",
+     "https://passkeys.dev/docs/reference/known-issues/"
+    ]
+   },
+   {
+    "claim": "An app lock is possible only as an in-app lock screen; iOS's 'Require Face ID' doesn't apply to Home Screen web apps (Progressier, June 2025). Home Screen apps keep their own days-of-use counter, so a long-lived HttpOnly session cookie is viable.",
+    "verdict": "confirmed",
+    "correction": "Progressier (25 Jun 2025): 'Home Screen Web Apps currently cannot be secured using Face ID or Touch ID.' I found nothing newer for iOS 26/27, so that part is still uncertain. A better current source than the 2020 WebKit blog is WebKit's Tracking Prevention page: 'The first-party domain of home screen web applications is exempt from ITP's 7-day cap on all script-writeable storage\u2026 kept isolated from Safari.' Caveat: ITP still caps HTTP-set cookies at 7 days under third-party CNAME or IP cloaking, so keep the API on the same host as the app (gma.4mn.org), not a differently hosted subdomain.",
+    "sources": [
+     "https://intercom.help/progressier/en/articles/11649686-can-you-use-require-face-id-to-limit-access-to-an-installed-pwa-on-ios",
+     "https://webkit.org/tracking-prevention/",
+     "https://webkit.org/blog/10218/full-third-party-cookie-blocking-and-more/"
+    ]
+   },
+   {
+    "claim": "Library facts: @simplewebauthn/server 14.0.3 (25 Sep 2026) and browser 14.0.0 (2 Sep 2026); MIT; ~4.2M weekly downloads; repo pushed 11 Oct 2026; conditional ESM/CJS exports; Node 22 minimum; sendSignal / browserSupportsPasskeys / getBrowserCapabilities / ML-DSA; engines >=20; 14.0.2 advisory GHSA-2g3p-m8c9-hhwh; fido2-lib 4.0.0 (Node 22+, ~38K/wk); @passwordless-id/webauthn 2.4.1 (~34K/wk); webauthn-json deprecated; oslojs unsupported.",
+    "verdict": "confirmed",
+    "correction": "Registry: server 14.0.3 published 2026-09-25, engines node >=20.0.0, exports {import: ./esm, require: ./script}. browser 14.0.0 published 2026-09-02 and has no engines field at all, so the '>=20' remark applies to the server package only. Downloads for 12\u201318 Oct: 4,162,502 server and 4,300,513 browser. GitHub pushed_at 2026-10-11, MIT. The v14.0.0 notes list the Node LTS 22.x minimum as a breaking change. 14.0.2 fixed GHSA-2g3p-m8c9-hhwh (CVSS 5.4, CRL processing). fido2-lib 4.0.0 was published 2026-10-03, engines >=22, 38,068/wk. @passwordless-id/webauthn 2.4.1 was published 2026-10-06, 34,147/wk. @github/webauthn-json is deprecated in favour of the native methods. @oslojs/webauthn shows 'Package no longer supported'. Gotcha the claim missed: in runtimes that support it, v14's generateRegistrationOptions() lists ML-DSA-44 as the most preferred algorithm, and 14.0.3 only defers Node's PQC warnings. Apple and Google authenticators will still pick ES256, but run a test registration and pin supportedAlgorithmIDs if needed.",
+    "sources": [
+     "https://registry.npmjs.org/@simplewebauthn/server",
+     "https://registry.npmjs.org/@simplewebauthn/browser",
+     "https://github.com/MasterKale/SimpleWebAuthn/releases",
+     "https://registry.npmjs.org/fido2-lib",
+     "https://registry.npmjs.org/@passwordless-id/webauthn",
+     "https://registry.npmjs.org/@github/webauthn-json",
+     "https://registry.npmjs.org/@oslojs/webauthn",
+     "https://api.npmjs.org/downloads/point/last-week/@simplewebauthn/server"
+    ]
+   },
+   {
+    "claim": "Fallbacks and revocation: several passkeys per user, kept apart with excludeCredentials; revoke by deleting rows and sessions; email code for recovery; old Android, iOS 15, iCloud Keychain off and shared iPads use codes; store the listed fields; the listed AAGUID labels; zero AAGUID falls back to the UA; synced counter 0; the shared-iPad picker shows names.",
+    "verdict": "confirmed",
+    "correction": "The aaguid.json in passkeydeveloper/passkey-authenticator-aaguids confirms Apple Passwords fbfc3007-154e-4ecc-8c0b-6e020557d7bd, Google Password Manager ea9b8d66-4d01-1d21-3ce4-b6b48cb575d4, Samsung Pass 53414d53-554e-4700-0000-000000000000 and 1Password bada5566-a7aa-401f-bd96-45619a55120d. Add Bitwarden d548826e-79b4-db40-a3d8-11116f7e8349, Proton Pass 50726f74-6f6e-5061-7373-50726f746f6e and iCloud Keychain (Managed) dd4ec289-\u2026. L3 'none' attestation no longer zeroes the AAGUID; it only strips attStmt. Nuance on iOS 15: isUserVerifyingPlatformAuthenticatorAvailable() is true there, and create() makes a device-bound credential that works for that device's life. Keeping iOS 15 on codes therefore needs UA sniffing, or can simply be dropped.",
+    "sources": [
+     "https://github.com/passkeydeveloper/passkey-authenticator-aaguids",
+     "https://passkeys.dev/docs/reference/ios/",
+     "https://simplewebauthn.dev/docs/packages/server",
+     "https://www.w3.org/TR/webauthn-3/"
+    ]
+   }
+  ],
+  "missing": [
+   "The page can't tell Face ID from Touch ID from a fingerprint reader. WebAuthn's ClientCapability enum has no biometric type, and an iPhone's user agent doesn't reveal the model (an iPhone SE has Touch ID). The flow's adaptive label ('Face ID / Touch ID / fingerprint') would have to guess and will sometimes be wrong. Use neutral wording such as 'Sign in the way you unlock your phone'.",
+   "What relatives will actually see: rp.name is deprecated 'because many clients do not display it', so the system sheet shows 'gma.4mn.org' and the word 'passkey', not \"Grandma's Feed\". Put a screenshot of the real iOS and Android sheets in the walkthrough so the prompt isn't alarming.",
+   "Apple's shared password groups (iOS 17+) can share passkeys. Anyone in a relative's group, or anyone sharing their Apple Account or device passcode, can sign in as that relative. That's acceptable for a family app, but Ben should know it.",
+   "Tapping 'Sign in with Face ID' with empty allowCredentials on a device that has no passkey (they chose 'Not now', or it was made in another ecosystem) opens a system sheet for a nearby device or QR code or a security key. That's a dead end for older users. Only make the button primary when there's a hint: a cookie copied at install, or the server knowing this user has a credential after they enter their email. Otherwise make the email code primary. The exact iOS sheet needs a device test.",
+   "Safari reports a cancelled Face ID sheet and a failure as the same NotAllowedError (Corbado's analysis of Apple's error codes). After any error, show a calm 'Try again' plus 'Email me a code', never a technical message. A relative who has forgotten their device passcode after Face ID fails must land on the email code.",
+   "There's no cookie copy before iOS 17.2. On iOS 16 and 17.0\u201317.1 (an iPhone 8 or X tops out at iOS 16) the installed app always starts signed out. The Phase 2 test matrix (iOS 18/26/27) should add iOS 16 and 17. iOS 16\u201317.3 also has the one-get-without-gesture rule.",
+   "In-app browsers: if a relative opens the invite in the Gmail, Outlook or Facebook app, the link may not open in Safari. There may be no Add to Home Screen, and passkey creation may fail or behave differently (only anecdotal reports found). Detect common in-app browser user agents and show an 'Open in Safari' step.",
+   "Adding to the Home Screen on iOS 26: in the default compact layout, Share sits behind the '\u2026' button, and the sheet has an 'Open as Web App' toggle. Older instructions that say 'tap Share' break. Write the walkthrough per iOS version.",
+   "Email-code ergonomics: iOS 17+ can autofill one-time codes from Mail in Safari. Mark the field autocomplete='one-time-code'. A developer forum reports it working on one subdomain but not another, and the pokecollector PR found the AutoFill key missing in a Home Screen app, so test whether it works in the installed app.",
+   "A prefetched challenge expires after 5 minutes, but an older relative may leave the screen open longer. Refetch options when they expire or the page becomes visible again, and set the WebAuthn timeout to match.",
+   "Guard signalAllAcceptedCredentials. Apple deletes rather than hides, so never call it with an empty list or after a failed database read. WebKit bug 273712 also shows create() can save a passkey on the phone while the site never gets the response. The next sign-in's accepted list cleans that orphan up, but until then the relative sees a passkey that doesn't work, so the unknown-credential path must be friendly.",
+   "No screen lock: on Android, Chrome asks for a security key at creation (verified), which an older user will not understand. An iPhone with no passcode probably can't use iCloud Keychain passkeys (not verified). Keep those users on email codes and only offer the passkey prompt after a successful check.",
+   "Samsung Galaxy users whose default browser is Samsung Internet: Samsung Pass passkeys stay on the device and there's no primary source on installed-PWA behaviour. Add a Galaxy with One UI 6+ to the device tests.",
+   "Staging RP ID: draft.gma.4mn.org can legally use RP ID 'gma.4mn.org', so give staging its own RP ID and keep its origin out of production's expectedOrigin list."
+  ]
+ }
+}

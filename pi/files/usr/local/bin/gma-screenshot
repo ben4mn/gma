@@ -1,0 +1,39 @@
+#!/bin/bash
+# Screenshot of what Grandma sees, taken with grim inside the kiosk's Wayland
+# session. Run as root: sudo gma-screenshot [/tmp/out.png]
+# Prints the path of the PNG. remote/screenshot.sh copies it back with scp.
+set -euo pipefail
+
+# shellcheck source=../lib/gma-kiosk/common.sh
+. /usr/local/lib/gma-kiosk/common.sh
+
+[[ $(id -u) == 0 ]] || gma_die "run as root: sudo gma-screenshot"
+
+out=${1:-/tmp/gma-screenshot-$(date +%Y%m%d-%H%M%S).png}
+case $out in
+    */../*|*/./*) gma_die "the output must be a plain path under /tmp" ;;
+    /tmp/*.png) ;;
+    *) gma_die "the output must be a .png under /tmp" ;;
+esac
+
+# grim runs as the kiosk user, so it writes into a directory that user owns.
+work=$(mktemp -d /tmp/gma-shot.XXXXXX)
+trap 'rm -rf "$work"' EXIT
+chown "$GMA_KIOSK_USER" "$work"
+
+if ! gma_as_kiosk_wayland grim -t png "$work/shot.png"; then
+    gma_die "grim failed (screen off for the night on an HDMI panel, or the kiosk is not running)"
+fi
+
+# The kiosk user (Chromium) owned $work while grim ran. Take the directory
+# back first, so it cannot swap the file for a link while root touches it,
+# then set owner and mode before the file lands in world-writable /tmp
+# (chown/chmod there would follow a link planted by the file's old owner).
+chown root:root "$work"
+chmod 0700 "$work"
+[[ -f $work/shot.png && ! -L $work/shot.png ]] || gma_die "grim did not leave a PNG"
+# Hand the file to whoever called sudo so scp and rm work without root.
+chown "${SUDO_USER:-root}" "$work/shot.png"
+chmod 0600 "$work/shot.png"
+mv -f "$work/shot.png" "$out"
+printf '%s\n' "$out"

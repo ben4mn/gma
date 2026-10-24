@@ -1,0 +1,107 @@
+/* Lantern — design tokens.
+   A quiet gallery at dusk: the photo glows, everything else steps back.
+   Every colour is hex (or rgb + alpha for plates) so contrast can be checked.
+   Ratios in comments are WCAG 2.x against the surface named. */
+
+@font-face {
+  font-family: "Lexend";
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: block;
+  src: url("fonts/Lexend-latin-var.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Literata";
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: block;
+  src: url("fonts/Literata-latin-var.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Literata";
+  font-style: italic;
+  font-weight: 400 500;
+  font-display: block;
+  src: url("fonts/Literata-Italic-latin-var.woff2") format("woff2");
+}
+
+:root {
+  /* ---- Palette: day (the default) ---- */
+  --bg:            #101215;  /* the room */
+  --surface:       #1B1F24;  /* placards, cards */
+  --raised:        #262B31;  /* buttons */
+  --raised-press:  #2F353C;  /* a button under a finger */
+  --line:          #3A4048;  /* hairlines (decorative, not text) */
+  --text:          #F4EFE6;  /* 16.4 on bg · 14.5 on surface · 12.5 on raised */
+  --muted:         #CFC7BA;  /* 11.2 on bg · 9.9 on surface · 8.5 on raised */
+  --honey:         #F2B544;  /* accent: 10.3 on bg · 9.0 on surface · 7.8 on raised */
+  --honey-ink:     #1A1406;  /* text on honey: 10.0 */
+  --honey-deep:    #3A2E14;  /* honey-tinted fill; text on it 11.6 */
+  --rose:          #F2A7B0;  /* Love only: 8.6 on surface · 7.4 on raised */
+  --rose-deep:     #3B2328;  /* rose-tinted fill behind a chosen Love */
+
+  /* Frosted plates: near-opaque on purpose. Worst case is a pure-white photo
+     underneath: #14171B at 0.9 over white = #2B2E32, still 11.9 for --text
+     and 8.1 for --muted. */
+  --plate:         rgba(20, 23, 27, 0.90);
+  --plate-strong:  rgba(16, 18, 21, 0.94);
+  --plate-blur:    blur(22px) saturate(1.15);
+  --plate-edge:    rgba(244, 239, 230, 0.09);
+
+  /* Glows: decorative light, never carries text */
+  --glow-honey:    rgba(242, 181, 68, 0.30);
+  --glow-honey-edge: rgba(242, 181, 68, 0.62);
+  --shadow-deep:   0 24px 64px rgba(0, 0, 0, 0.55);
+
+  /* ---- Palette: night (Grandma's frame after dark) ---- */
+  --n-bg:          #0B0907;  /* warm black */
+  --n-plate:       rgba(16, 12, 8, 0.92);
+  --n-raised:      #1E1810;  /* night buttons */
+  --n-text:        #EBD2A8;  /* amber cream: 13.6 on n-bg · 12.0 on n-raised */
+  --n-muted:       #C9AD84;  /* 9.3 on n-bg · 8.2 on n-raised */
+  --n-honey:       #C9932F;  /* dimmed accent, decorative rings only */
+
+  /* ---- Type families ---- */
+  --font-ui:       "Lexend", "Figtree", system-ui, sans-serif;
+  --font-words:    "Literata", "Source Serif 4", Georgia, serif;  /* what people wrote */
+
+  /* ---- Type scale: Grandma's frame (1280x800 at arm's length) ---- */
+  --g-clock-night: 184px;  /* weight 300, lh 1 */
+  --g-display:     52px;   /* the day clock, weight 500, lh 1.05 */
+  --g-title:       44px;   /* screen titles, weight 700, lh 1.15 */
+  --g-name:        40px;   /* sender name, weight 700, lh 1.1 */
+  --g-preset:      34px;   /* preset message buttons, weight 500, lh 1.2 */
+  --g-caption:     30px;   /* Literata, weight 400, lh 1.42 */
+  --g-body:        28px;   /* weight 400, lh 1.35 */
+  --g-label:       26px;   /* button labels, weight 600, lh 1.2 */
+  --g-meta:        24px;   /* when / who, weight 500, lh 1.3 */
+  --g-small:       22px;   /* the smallest words on the frame, weight 600 */
+
+  /* ---- Type scale: family phone PWA (390x844) ---- */
+  --f-title:       30px;   /* weight 700, lh 1.1 */
+  --f-name:        17px;   /* weight 600, lh 1.3 */
+  --f-body:        16px;   /* weight 400, lh 1.45 */
+  --f-caption:     17px;   /* Literata, weight 400, lh 1.5 */
+  --f-meta:        14px;   /* weight 500, lh 1.35 */
+  --f-tab:         13px;   /* tab labels, weight 600, lh 1.2 */
+
+  /* ---- Spacing (4-pt base) ---- */
+  --s-1: 4px;  --s-2: 8px;  --s-3: 12px; --s-4: 16px;
+  --s-5: 24px; --s-6: 32px; --s-7: 48px; --s-8: 64px;
+
+  /* ---- Radii ---- */
+  --r-sm: 12px;   /* thumbnails */
+  --r-md: 20px;   /* cards, photos on the phone */
+  --r-lg: 24px;   /* frame buttons */
+  --r-xl: 32px;   /* frame plates, the dock */
+  --r-pill: 999px;
+
+  /* ---- Frame geometry (fixed so Home never moves) ---- */
+  --home-x: 24px;        /* from the left edge */
+  --home-bottom: 24px;   /* from the bottom edge */
+  --home-w: 136px;
+  --home-h: 120px;
+  --dock-h: 144px;       /* plate around the 120 px buttons */
+
+  --ease: cubic-bezier(.2, .7, .2, 1);
+}

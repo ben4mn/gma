@@ -1,0 +1,153 @@
+# gma.4mn.org on Ben's Debian box: /home/ben/gma/docker-compose.yml, with .env beside it.
+#
+#   docker compose up -d --build      start, or update after a git pull
+#   docker compose ps                 all three should say "healthy" (the tunnel has no healthcheck)
+#   docker compose logs -f app        sign-in codes show up here while EMAIL_TRANSPORT=console
+#
+# Three containers on a fixed subnet (Docker's default address pools are used up on this box):
+#   gma-app     10.35.0.2  the web app, the API and the media (port 8080 inside)
+#   gma-tunnel  10.35.0.3  cloudflared: gma.4mn.org → http://app:8080 (deploy/cloudflared.yml)
+#   gma-worker  10.35.0.4  photos, videos and voice notes → renditions; the nightly database snapshot
+#
+# The tunnel goes straight to the app: nothing listens on the LAN, and
+# nginx-proxy-manager (80/443) isn't involved. 127.0.0.1:3064 is only for
+# poking at the app from the box itself (curl http://127.0.0.1:3064/healthz).
+#
+# Storage: the database is on the SSD (the gma_data volume; SQLite needs fast
+# fsync), the media on the Seagate drive (gma_media, bound to
+# /mnt/seagate/gma/media). If the drive isn't mounted, that folder doesn't
+# exist and Docker refuses to start the app and the worker, so nothing is ever
+# written to the SSD in its place; the app also checks for the .gma-media file.
+
+name: gma
+
+x-gma: &gma
+  image: gma:local
+  build:
+    context: .
+    dockerfile: Dockerfile
+  env_file: .env
+  # Pinned here so a typo in .env can't move the data or open the proxy trust.
+  environment:
+    NODE_ENV: production
+    HOST: 0.0.0.0
+    PORT: "8080"
+    DATA_DIR: /data
+    MEDIA_DIR: /media
+    MEDIA_SENTINEL: .gma-media
+    TRUST_PROXY: 10.35.0.3 # only the tunnel's CF-Connecting-IP is believed
+  user: "1000:1000"
+  read_only: true # writes go only to /data, /media and /tmp
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  volumes:
+    - gma_data:/data
+    - gma_media:/media
+  restart: unless-stopped
+  logging: &logging
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+services:
+  app:
+    <<: *gma
+    container_name: gma-app
+    command: ["node", "src/index.js"]
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    # The box is shared with Ben's other apps: a runaway request or a leak gets
+    # this container killed, never Encore, Docket or the host.
+    mem_limit: 1g
+    memswap_limit: 1g
+    pids_limit: 256
+    ports:
+      - "127.0.0.1:3064:8080" # local debugging only; the tunnel uses the network below
+    networks:
+      gma:
+        ipv4_address: 10.35.0.2
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    stop_grace_period: 15s
+
+  worker:
+    <<: *gma
+    container_name: gma-worker
+    command: ["node", "src/worker.js"]
+    # ffmpeg would happily take every core; three keep Ben's other apps responsive.
+    cpus: 3
+    # Decoding is capped too (120 MP per image, HEIC checked before heif-dec);
+    # this is the backstop, and it includes the 1 GB /tmp below.
+    mem_limit: 3g
+    memswap_limit: 3g
+    pids_limit: 256
+    # Scratch space for decoding (a 48 MP HEIC → PNG is ~150 MB) and SQLite's temp files.
+    tmpfs:
+      - /tmp:size=1g,mode=1777
+    networks:
+      gma:
+        ipv4_address: 10.35.0.4
+    healthcheck:
+      test: ["CMD", "node", "scripts/worker-health.js"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    # The app runs the database migrations first.
+    depends_on:
+      app:
+        condition: service_healthy
+    # The worker gives a running ffmpeg up to 30 s to finish before it exits.
+    stop_grace_period: 40s
+
+  tunnel:
+    image: cloudflare/cloudflared:2026.9.1@sha256:b269e8abd07a5bf6f3f4be65d5050b2174eca89c56a0241a8ff32a16aec454e4
+    container_name: gma-tunnel
+    user: "1000:1000"
+    command: tunnel --no-autoupdate --config /etc/cloudflared/config.yml run
+    mem_limit: 256m
+    pids_limit: 128
+    volumes:
+      - ./deploy/cloudflared.yml:/etc/cloudflared/config.yml:ro
+      - ${GMA_TUNNEL_CREDENTIALS:?set GMA_TUNNEL_CREDENTIALS in .env, see .env.example}:/etc/cloudflared/credentials.json:ro
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+      gma:
+        ipv4_address: 10.35.0.3
+    restart: unless-stopped
+    logging: *logging
+
+networks:
+  gma:
+    ipam:
+      config:
+        - subnet: 10.35.0.0/24
+          gateway: 10.35.0.1
+
+volumes:
+  # On the SSD, where Docker keeps its volumes.
+  gma_data:
+    name: gma_data
+  # On the Seagate drive. Docker reads these options only when it creates the
+  # volume: to change them, `docker compose down` then `docker volume rm gma_media`
+  # (that removes the volume's definition, not the files on the drive).
+  gma_media:
+    name: gma_media
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/seagate/gma/media

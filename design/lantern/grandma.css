@@ -1,0 +1,94 @@
+/* Lantern — Grandma's frame (1280x800), shared by home.html and photo.html.
+   The dock and the Home button live here so they are pixel-identical on
+   every screen. */
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+html { background: var(--bg); color-scheme: dark; overflow: hidden; }
+body {
+  width: 1280px; height: 800px; overflow: hidden; position: relative;
+  background: var(--bg); color: var(--text);
+  font-family: var(--font-ui); font-size: var(--g-body); line-height: 1.35;
+  -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+  -webkit-tap-highlight-color: transparent; user-select: none;
+}
+img { display: block; }
+button { font: inherit; color: inherit; border: 0; background: none; padding: 0; cursor: pointer; }
+a { color: inherit; text-decoration: none; }
+p, h1, h2, h3, figure { margin: 0; }
+[hidden] { display: none !important; }
+
+.icon {
+  width: 1em; height: 1em; flex: none;
+  fill: none; stroke: currentColor; stroke-width: 2.4;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+
+/* ---------- The photo: a blurred, darkened fill of itself + the sharp print ---------- */
+.fill {
+  position: absolute; inset: -60px; width: calc(100% + 120px); height: calc(100% + 120px);
+  object-fit: cover; filter: blur(44px) brightness(.5) saturate(1.2);
+  pointer-events: none;
+}
+.print {
+  position: absolute; object-fit: contain; border-radius: 14px;
+  box-shadow: 0 0 0 1px rgba(244, 239, 230, .07), 0 30px 90px rgba(0, 0, 0, .6);
+}
+/* the lantern: light pools in the middle, the room falls away at the edges */
+.vignette {
+  position: absolute; inset: 0; pointer-events: none;
+  background:
+    radial-gradient(120% 95% at 38% 42%, rgba(16, 18, 21, 0) 55%, rgba(16, 18, 21, .55) 100%);
+}
+
+/* ---------- Plates ---------- */
+.plate {
+  background: var(--plate);
+  -webkit-backdrop-filter: var(--plate-blur); backdrop-filter: var(--plate-blur);
+  border: 1px solid var(--plate-edge);
+  border-radius: var(--r-xl);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .35);
+}
+
+/* ---------- The dock ---------- */
+.dock {
+  position: absolute; left: 12px; bottom: 12px; height: var(--dock-h);
+  display: flex; align-items: center; gap: 12px; padding: 0 12px;
+  z-index: 20;
+}
+
+/* ---------- Big buttons ---------- */
+.btn {
+  height: 120px; min-width: 120px; padding: 0 28px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 14px;
+  border-radius: var(--r-lg);
+  background: var(--raised); color: var(--text);
+  font-size: var(--g-label); font-weight: 600; line-height: 1.15;
+  box-shadow: inset 0 1px 0 rgba(244, 239, 230, .06), 0 6px 18px rgba(0, 0, 0, .25);
+  transition: transform .18s var(--ease), background-color .18s var(--ease);
+}
+.btn .icon { font-size: 40px; }
+.btn:active { transform: scale(.97); background: var(--raised-press); }
+.btn:focus-visible, .tap:focus-visible { outline: 4px solid var(--honey); outline-offset: 4px; }
+.btn--honey { background: var(--honey); color: var(--honey-ink); }
+.btn--honey .icon { stroke-width: 2.6; }
+.btn--honey:active { background: #E3A733; }
+
+/* ---------- Home: same size, same place, every screen ---------- */
+.home {
+  position: absolute; left: var(--home-x); bottom: var(--home-bottom);
+  width: var(--home-w); height: var(--home-h); padding: 0;
+  flex-direction: column; gap: 6px; z-index: 30;
+}
+.home .icon { font-size: 46px; }
+.home-word { font-size: var(--g-label); font-weight: 600; }
+/* on Home itself: "you're here" — lit, not hidden */
+.home[aria-current="page"] {
+  background: var(--honey-deep); color: var(--text);
+  box-shadow: inset 0 0 0 3px var(--honey), 0 0 26px rgba(242, 181, 68, .22);
+}
+.home[aria-current="page"] .icon { color: var(--honey); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 1ms !important; animation: none !important; }
+}

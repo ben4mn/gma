@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Grandma's family: a print on the terracotta of the app's main button.
+       The print sits inside the central 80% so the maskable crop never cuts it. -->
+  <rect width="512" height="512" fill="#8A3517"/>
+  <g transform="rotate(-4 256 262)">
+    <rect x="128" y="112" width="256" height="300" rx="6" fill="#2B2119" opacity="0.28" transform="translate(6 12)"/>
+    <rect x="128" y="112" width="256" height="300" rx="6" fill="#FFFDF8"/>
+    <rect x="150" y="134" width="212" height="196" fill="#F3DED3"/>
+    <circle cx="310" cy="184" r="26" fill="#B8862B"/>
+    <path d="M150 330V268c34-30 64-38 96-20 26 14 44 8 66-12 20-18 36-20 50-12v106Z" fill="#3A5236"/>
+    <path d="M150 330v-30c40-22 78-20 120 2 34 18 62 16 92 0v28Z" fill="#2C3F29"/>
+    <path d="M256 384s-30-17.5-30-36a15 15 0 0 1 30-6 15 15 0 0 1 30 6c0 18.5-30 36-30 36Z" fill="#8A3517"/>
+  </g>
+</svg>

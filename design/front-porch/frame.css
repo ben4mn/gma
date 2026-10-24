@@ -1,0 +1,124 @@
+/* Front Porch — the fixed Grandma frame (1280x800), shared by home.html and photo.html
+   so Home, the clock, the stage and the rail sit on the same pixels on every screen.
+
+   +-------------------------------------------------------------------------------+
+   | [⌂ Home]   line for this screen                                  10:42 am     |  top bar 124
+   |                                                         Tuesday, October 21  |
+   +-------------------------------------------------+-----------------------------+
+   |                                                 |                             |
+   |   stage: the photo (left two-thirds, 832 px)    |   rail: big solid keys      |
+   |                                                 |   that never move (400 px)  |
+   +-------------------------------------------------+-----------------------------+
+*/
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  width: 1280px; height: 800px; overflow: hidden; position: relative;
+  background: var(--bg); color: var(--ink);
+  font-family: var(--font); font-size: var(--g-body); line-height: 1.25;
+  -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+img { display: block; }
+button { font: inherit; color: inherit; margin: 0; }
+a { color: inherit; text-decoration: none; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.icon { width: 1em; height: 1em; flex: none; fill: none; stroke: currentColor;
+        stroke-width: 3.4; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---- The key: everything Grandma can press looks like a remote-control key:
+        a thick ink outline sitting on a solid ink base (the lip). Nothing else has a lip. */
+.key {
+  display: flex; align-items: center; justify-content: center; gap: 14px;
+  background: var(--bg); color: var(--ink);
+  border: var(--g-line) solid var(--ink); border-radius: var(--r-md);
+  box-shadow: 0 var(--g-lip) 0 var(--ink);
+  cursor: pointer; text-align: center; font-weight: 800;
+  transition: transform 90ms ease-out, box-shadow 90ms ease-out;
+}
+.key:active, .key[aria-pressed="true"], .key[aria-current="page"] {
+  transform: translateY(var(--g-lip)); box-shadow: 0 0 0 var(--ink);
+}
+.key:focus-visible { outline: 6px solid var(--primary); outline-offset: 4px; }
+.key.blue { background: var(--primary); color: var(--on-color); }
+
+/* ---- Top bar ---------------------------------------------------------- */
+.top {
+  position: absolute; left: 0; top: 0; width: 1280px; height: 124px;
+  display: flex; align-items: center; gap: 28px; padding: 0 16px;
+}
+.home {
+  width: 216px; height: 96px; flex: none; margin-top: -6px;
+  font-size: var(--g-label); letter-spacing: 0.01em;
+}
+.home .icon { font-size: 46px; stroke-width: 3.6; }
+/* On Home itself the key is held down in its own base, like the Love tile after she taps it:
+   same place, same white, same word, its house filled in. Down means "this is the one that's on":
+   you're here. (A grey, flat key read as "switched off".) */
+.home { --door: var(--bg); }
+.home[aria-current="page"] { transform: translateY(var(--g-lip)); box-shadow: 0 0 0 var(--ink); background: var(--bg); }
+
+.line { min-width: 0; display: flex; align-items: center; gap: 16px; }
+.line .big { font-size: var(--g-title); font-weight: 800; line-height: 1.05; letter-spacing: -0.005em; }
+.line .sub { font-size: var(--g-small); font-weight: 600; color: var(--ink-2); line-height: 1.2; margin-top: 4px; }
+
+.clock { margin-left: auto; text-align: right; flex: none; }
+.clock .time { font-size: var(--g-display); font-weight: 800; line-height: 1; letter-spacing: -0.01em; }
+.clock .date { font-size: var(--g-small); font-weight: 600; color: var(--ink-2); margin-top: 6px; }
+
+/* ---- Stage and rail --------------------------------------------------- */
+.stage { position: absolute; left: 16px; top: 128px; width: 832px; height: 656px; } /* bottom edge = the rail's */
+.rail {
+  position: absolute; left: 864px; top: 128px; width: 400px; height: 656px;
+  background: var(--surface); border-radius: var(--r-lg); padding: 16px;
+  display: flex; flex-direction: column;
+}
+.rail-head { font-size: var(--g-reaction); font-weight: 800; line-height: 1.1; padding: 4px 6px 14px; }
+
+/* The photo card: a picture in a thick frame with its words underneath, like a print on the fridge. */
+.card {
+  position: absolute; inset: 0;
+  background: var(--bg); border: var(--g-line) solid var(--ink); border-radius: var(--r-lg);
+  overflow: hidden; display: flex; flex-direction: column;
+}
+.card .pic { position: relative; flex: 1; min-height: 0; overflow: hidden; background: var(--ink); }
+.card .pic > img.cover { width: 100%; height: 100%; object-fit: cover; }
+.card .words {
+  flex: none; border-top: var(--g-line) solid var(--ink);
+  padding: 16px 26px 18px; background: var(--bg);
+}
+.card .who { font-size: var(--g-small); font-weight: 700; color: var(--ink-2); line-height: 1.15; }
+.card .say { font-size: var(--g-body); font-weight: 650; line-height: 1.22; }
+
+/* Portrait photos: the photo whole and upright, its own blurred colours filling the sides.
+   Never a crop that cuts heads. */
+.fill { position: absolute; inset: -40px; width: calc(100% + 80px); height: calc(100% + 80px);
+        object-fit: cover; filter: blur(32px) brightness(0.86) saturate(1.25); }
+.whole { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+
+/* ---- Night mode (html[data-night]): true black, everything in the same place ----
+   The panel emits almost nothing; outlines go mid-grey so keys stay findable without glare;
+   photos sit under a black veil; colour tiles drop to their night tones (tokens.css). */
+.t-night { display: none; }
+[data-night] .t-day { display: none; }
+[data-night] .t-night { display: inline; }
+[data-night] body { background: var(--n-bg); color: var(--n-ink); }
+[data-night] .key { background: var(--n-bg); color: var(--n-ink); border-color: var(--n-line); box-shadow: 0 var(--g-lip) 0 var(--n-line); }
+[data-night] .key:active, [data-night] .key[aria-pressed="true"] { box-shadow: 0 0 0 var(--n-line); }
+[data-night] .key.blue { background: var(--n-primary); color: var(--n-ink); }
+[data-night] .home { --door: var(--n-bg); }
+[data-night] .home[aria-current="page"] { background: var(--n-bg); box-shadow: 0 0 0 var(--n-line); }
+[data-night] .line .sub, [data-night] .clock .date, [data-night] .card .who { color: var(--n-ink-2); }
+[data-night] .rail { background: var(--n-surface); }
+[data-night] .card { border-color: var(--n-line); background: var(--n-bg); }
+[data-night] .card .words { background: var(--n-bg); border-top-color: var(--n-line); }
+/* A black veil, not a filter: a filter would undo the portrait blur. Keys stay above it. */
+[data-night] .pic::after { content: ""; position: absolute; inset: 0; z-index: 1; background: #000; opacity: calc(1 - var(--n-photo)); pointer-events: none; }
+.pic > .key, .pic > [role="status"] { z-index: 2; }
+
+/* ---- Reduced motion: no transitions at all ---------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .key { transition: none; }
+}

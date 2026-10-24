@@ -1,0 +1,303 @@
+#!/bin/bash
+# Night mode for the frame's panel. Run by gma-display.service (as root).
+#
+#   gma-display            loop forever, applying day/night once a minute
+#   gma-display --once     ask the server once, apply once and exit
+#   gma-display --status   print what it would do, change nothing
+#
+# The night hours are Ben's, from /admin: every 5 minutes this asks
+# GET <origin>/api/frame/display with the frame's own token (both taken from the
+# pairing URL, KIOSK_URL in /etc/default/gma-kiosk; the token is never logged
+# or put on a command line) and keeps the last good answer in
+# /var/lib/gma-kiosk/display.json, so a night without internet still dims on
+# time. NIGHT_START/NIGHT_END in /etc/default/gma-kiosk are only used until the
+# server has answered once.
+#
+# DSI panel (/sys/class/backlight/* exists): dim to NIGHT_BRIGHTNESS_PERCENT at
+# night, DAY_BRIGHTNESS_PERCENT by day. Never fully off, so a tap still shows
+# something; the web app dims too and swallows the first tap.
+# HDMI panel (no backlight): nothing, the web app dims with CSS. With
+# DISPLAY_OFF_AT_NIGHT=1 the output is switched off with wlr-randr at night
+# (taps do not wake it; it comes back when the night ends).
+set -euo pipefail
+
+# shellcheck source=../lib/gma-kiosk/common.sh
+. "${GMA_LIB_DIR:-/usr/local/lib/gma-kiosk}/common.sh"
+
+MODE=loop
+case ${1-} in
+    "") ;;
+    --once) MODE=once ;;
+    --status) MODE=status ;;
+    -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
+    *) gma_die "unknown option: $1 (try --help)" ;;
+esac
+
+DISPLAY_CACHE=$GMA_STATE_DIR/display.json
+POLL_SECONDS=300
+LAST_STATE=""
+LAST_WINDOW=""
+LAST_POLL_AT=0
+LAST_POLL_RESULT=""
+
+load_settings() {
+    LOCAL_NIGHT_START=$(gma_config_get NIGHT_START 21:00)
+    LOCAL_NIGHT_END=$(gma_config_get NIGHT_END 07:00)
+    NIGHT_PCT=$(gma_config_get NIGHT_BRIGHTNESS_PERCENT 10)
+    DAY_PCT=$(gma_config_get DAY_BRIGHTNESS_PERCENT 100)
+    OFF_AT_NIGHT=$(gma_config_get DISPLAY_OFF_AT_NIGHT 0)
+    OUTPUT_NAME=$(gma_config_get DISPLAY_OUTPUT "")
+    [[ $NIGHT_PCT =~ ^[0-9]+$ ]] || NIGHT_PCT=10
+    [[ $DAY_PCT =~ ^[0-9]+$ ]] || DAY_PCT=100
+    (( NIGHT_PCT >= 1 )) || NIGHT_PCT=1
+    (( NIGHT_PCT <= 100 )) || NIGHT_PCT=100
+    (( DAY_PCT <= 100 )) || DAY_PCT=100
+    (( DAY_PCT >= 1 )) || DAY_PCT=1
+}
+
+# --- the night hours: the server's, saved, or the local fallback ---------------
+
+# The device token from a pairing URL (https://host/grandma?device=<token>).
+pairing_token() {
+    local url=$1 query param
+    local -a params
+    [[ $url == *\?* ]] || return 1
+    query=${url#*\?}
+    query=${query%%#*}
+    IFS='&' read -r -a params <<<"$query"
+    for param in "${params[@]}"; do
+        if [[ $param == device=* ]]; then
+            param=${param#device=}
+            # base64url, as /admin makes it; anything else is not a token
+            [[ $param =~ ^[A-Za-z0-9_-]{20,200}$ ]] || return 1
+            printf '%s' "$param"
+            return 0
+        fi
+    done
+    return 1
+}
+
+valid_tz() {
+    local tz=$1
+    [[ -n $tz && $tz =~ ^[A-Za-z0-9._+-]+(/[A-Za-z0-9._+-]+)*$ && $tz != *..* ]] || return 1
+    [[ -f /usr/share/zoneinfo/$tz ]]
+}
+
+# Prints "start|end|timezone" from a server answer or the saved copy, or fails.
+# Reads {night_start, night_end, timezone} at the top, or under .display or .settings.
+read_window() {
+    local file=$1 line start end tz
+    line=$(jq -er '
+        (if (.display | type) == "object" then .display
+         elif (.settings | type) == "object" then .settings
+         else . end) as $d
+        | [($d.night_start // ""), ($d.night_end // ""), ($d.timezone // "")]
+        | map(tostring | gsub("[|\n]"; "")) | join("|")' "$file" 2>/dev/null) || return 1
+    IFS='|' read -r start end tz <<<"$line" || true
+    gma_hhmm_to_minutes "$start" >/dev/null || return 1
+    gma_hhmm_to_minutes "$end" >/dev/null || return 1
+    valid_tz "$tz" || tz=""
+    printf '%s|%s|%s\n' "$start" "$end" "$tz"
+}
+
+# Notes how a poll went; says so only when that changes, so an outage is one line.
+poll_result() {
+    local result=$1 message=$2
+    if [[ $result != "$LAST_POLL_RESULT" ]]; then
+        if [[ $result == ok ]]; then gma_log "$message"; else gma_warn "$message"; fi
+        LAST_POLL_RESULT=$result
+    fi
+}
+
+# Asks the server for the night hours and saves a good answer. Never fatal.
+poll_server() {
+    local url origin token tmp code window start end tz
+    LAST_POLL_AT=$(gma_now)
+    url=$(gma_config_get KIOSK_URL "")
+    if [[ -z $url ]]; then
+        poll_result no-url "no KIOSK_URL in $GMA_CONFIG: using its NIGHT_START/NIGHT_END"
+        return 1
+    fi
+    origin=$(gma_origin_of "$url")
+    if ! token=$(pairing_token "$url"); then
+        poll_result bad-url "KIOSK_URL in $GMA_CONFIG has no device token: using its NIGHT_START/NIGHT_END"
+        return 1
+    fi
+    mkdir -p "$GMA_STATE_DIR"
+    tmp=$(mktemp "$GMA_STATE_DIR/.display.XXXXXX") || return 1
+    # The header comes in on stdin (-H @-), so the token is never in argv, ps or a log.
+    if ! code=$(curl -sS --max-time 20 --max-filesize 65536 --proto =https,http \
+        -H 'Accept: application/json' -H @- -o "$tmp" -w '%{http_code}' \
+        "$origin/api/frame/display" 2>/dev/null <<<"Authorization: Bearer $token"); then
+        code=000
+    fi
+    token=""
+    if [[ $code != 200 ]]; then
+        rm -f "$tmp"
+        case $code in
+            000) poll_result unreachable "cannot reach $origin; keeping the last night hours" ;;
+            401|403) poll_result refused "$origin refused the frame's token (HTTP $code: unpaired in /admin?); keeping the last night hours" ;;
+            *) poll_result "http-$code" "$origin answered HTTP $code for the night hours; keeping the last ones" ;;
+        esac
+        return 1
+    fi
+    if ! window=$(read_window "$tmp"); then
+        rm -f "$tmp"
+        poll_result bad-answer "$origin sent night hours this script cannot read; keeping the last ones"
+        return 1
+    fi
+    IFS='|' read -r start end tz <<<"$window" || true
+    if jq -n --arg s "$start" --arg e "$end" --arg tz "$tz" --argjson at "$(gma_now)" \
+        '{night_start: $s, night_end: $e, timezone: $tz, fetched_at: $at}' >"$tmp" &&
+        chmod 0644 "$tmp" && mv -f "$tmp" "$DISPLAY_CACHE"; then
+        poll_result ok "night hours from $origin: $start-$end${tz:+ ($tz)}"
+        return 0
+    fi
+    rm -f "$tmp"
+    gma_warn "could not save $DISPLAY_CACHE"
+    return 1
+}
+
+# Sets NIGHT_START, NIGHT_END, NIGHT_TZ and WINDOW_SOURCE: the saved server
+# answer when there is one, else NIGHT_START/NIGHT_END from the config file.
+resolve_window() {
+    local window fetched
+    if [[ -r $DISPLAY_CACHE ]] && window=$(read_window "$DISPLAY_CACHE"); then
+        IFS='|' read -r NIGHT_START NIGHT_END NIGHT_TZ <<<"$window" || true
+        fetched=$(jq -r '.fetched_at // empty' "$DISPLAY_CACHE" 2>/dev/null || true)
+        if [[ $fetched =~ ^[0-9]+$ ]]; then
+            WINDOW_SOURCE="the server (as of $(date -d "@$fetched" '+%Y-%m-%d %H:%M' 2>/dev/null || echo "$fetched"))"
+        else
+            WINDOW_SOURCE="the server"
+        fi
+    else
+        NIGHT_START=$LOCAL_NIGHT_START
+        NIGHT_END=$LOCAL_NIGHT_END
+        NIGHT_TZ=""
+        WINDOW_SOURCE="$GMA_CONFIG (the server has not answered yet)"
+    fi
+}
+
+# HH:MM now, in the night hours' time zone (else the Pi's own).
+now_hhmm() {
+    if [[ -n $NIGHT_TZ ]]; then TZ=$NIGHT_TZ date +%H:%M; else date +%H:%M; fi
+}
+
+current_state() {
+    local now start end
+    start=$(gma_hhmm_to_minutes "$NIGHT_START") || { gma_warn "bad NIGHT_START '$NIGHT_START', treating as day"; echo day; return; }
+    end=$(gma_hhmm_to_minutes "$NIGHT_END") || { gma_warn "bad NIGHT_END '$NIGHT_END', treating as day"; echo day; return; }
+    now=$(gma_hhmm_to_minutes "$(now_hhmm)")
+    if gma_is_night "$now" "$start" "$end"; then echo night; else echo day; fi
+}
+
+# --- the panel -------------------------------------------------------------------
+
+backlights() {
+    local d
+    for d in /sys/class/backlight/*; do
+        [[ -e $d/brightness && -e $d/max_brightness ]] && printf '%s\n' "$d"
+    done
+    return 0
+}
+
+apply_backlight() { # dir percent
+    local dir=$1 pct=$2 max target cur
+    max=$(<"$dir/max_brightness")
+    target=$(( max * pct / 100 ))
+    (( target >= 1 )) || target=1
+    # bl_power 0 = on (4 would power the backlight down, which we never do).
+    if [[ -w $dir/bl_power ]] && [[ $(<"$dir/bl_power") != 0 ]]; then
+        echo 0 >"$dir/bl_power"
+    fi
+    cur=$(<"$dir/brightness")
+    if [[ $cur != "$target" ]]; then
+        echo "$target" >"$dir/brightness"
+        gma_log "${dir##*/}: brightness $cur -> $target of $max ($pct%)"
+    fi
+}
+
+# Prints "<name> <yes|no>" for each wlr-randr output.
+wlr_outputs() {
+    gma_as_kiosk_wayland wlr-randr 2>/dev/null | awk '
+        /^[^ \t]/ { name = $1 }
+        /^[ \t]+Enabled:/ { print name, $2 }'
+}
+
+apply_output_power() { # on|off
+    local want=$1 name enabled found=0
+    while read -r name enabled; do
+        [[ -n $name ]] || continue
+        if [[ -n $OUTPUT_NAME && $name != "$OUTPUT_NAME" ]]; then
+            continue
+        fi
+        found=1
+        if [[ $want == off && $enabled == yes ]]; then
+            gma_as_kiosk_wayland wlr-randr --output "$name" --off && gma_log "$name: off for the night"
+        elif [[ $want == on && $enabled == no ]]; then
+            gma_as_kiosk_wayland wlr-randr --output "$name" --on && gma_log "$name: on for the day"
+        fi
+    done < <(wlr_outputs || true)
+    (( found )) || gma_warn "no Wayland output found yet (kiosk starting?)"
+}
+
+apply() {
+    local state pct dirs dir window
+    load_settings
+    # --status changes nothing, so it reads the saved answer instead of asking
+    if [[ $MODE != status ]] && (( $(gma_now) - LAST_POLL_AT >= POLL_SECONDS )); then
+        poll_server || true
+    fi
+    resolve_window
+    state=$(current_state)
+    dirs=$(backlights)
+
+    if [[ $MODE == status ]]; then
+        echo "night window: $NIGHT_START-$NIGHT_END${NIGHT_TZ:+ ($NIGHT_TZ)}, from $WINDOW_SOURCE"
+        echo "now: $(now_hhmm) (the Pi's time zone: $(timedatectl show -p Timezone --value 2>/dev/null || echo '?'))"
+        echo "state: $state"
+        if [[ -n $dirs ]]; then
+            for dir in $dirs; do
+                echo "backlight ${dir##*/}: $(<"$dir/brightness")/$(<"$dir/max_brightness") (target ${NIGHT_PCT}% at night, ${DAY_PCT}% by day)"
+            done
+        else
+            echo "no backlight: HDMI panel, the web app dims with CSS"
+            echo "DISPLAY_OFF_AT_NIGHT=$OFF_AT_NIGHT"
+            wlr_outputs 2>/dev/null | sed 's/^/output: /' || true
+        fi
+        return 0
+    fi
+
+    window="$NIGHT_START-$NIGHT_END${NIGHT_TZ:+ ($NIGHT_TZ)}"
+    if [[ $window != "$LAST_WINDOW" ]]; then
+        gma_log "night is $window, from $WINDOW_SOURCE"
+        LAST_WINDOW=$window
+    fi
+    if [[ $state != "$LAST_STATE" ]]; then
+        gma_log "it is $state"
+        LAST_STATE=$state
+    fi
+
+    if [[ -n $dirs ]]; then
+        if [[ $state == night ]]; then pct=$NIGHT_PCT; else pct=$DAY_PCT; fi
+        for dir in $dirs; do
+            apply_backlight "$dir" "$pct" || gma_warn "could not set ${dir##*/}"
+        done
+    elif [[ $OFF_AT_NIGHT == 1 ]]; then
+        if [[ $state == night ]]; then
+            apply_output_power off || true
+        else
+            apply_output_power on || true
+        fi
+    fi
+}
+
+if [[ $MODE == loop ]]; then
+    while :; do
+        apply || gma_warn "apply failed; trying again in a minute"
+        # Wake at the top of the next minute so 21:00 means 21:00.
+        sleep $(( 60 - 10#$(date +%S) ))
+    done
+else
+    apply
+fi

@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1280, height=800, initial-scale=1">
+<title>Photo from Sarah · Front Porch</title>
+<script>
+  // States: default · ?state=presets · ?state=sent · ?state=video
+  var q = new URLSearchParams(location.search);
+  document.documentElement.dataset.state = q.get('state') || 'default';
+  if (q.get('night') === '1') document.documentElement.dataset.night = '1';  // night mode, any state
+</script>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="frame.css">
+<style>
+  /* ---- What shows in which state -------------------------------------- */
+  .msg, .presets, .r-presets, .back, .play, .video, .sent-veil, .sent-plate { display: none; }
+  [data-state="default"] .m-photo, [data-state="sent"] .m-photo,
+  [data-state="video"] .m-video, [data-state="presets"] .m-presets { display: flex; }
+  [data-state="presets"] .card, [data-state="presets"] .r-react, [data-state="presets"] .send { display: none; }
+  [data-state="presets"] .presets, [data-state="presets"] .r-presets, [data-state="presets"] .back { display: flex; }
+  [data-state="presets"] .presets { display: grid; }
+  [data-state="video"] .photo { display: none; }
+  [data-state="video"] .video, [data-state="video"] .play { display: flex; }
+  [data-state="video"] .video { display: block; }
+  [data-state="sent"] .sent-veil { display: block; }
+  [data-state="sent"] .sent-plate { display: flex; }
+
+  .msg { align-items: center; }
+
+  /* ---- The photo card ------------------------------------------------- */
+  .card .words { padding: 18px 28px 20px; }
+  .card .say { font-size: var(--g-body); font-weight: 650; line-height: 1.24; text-wrap: balance; }
+  .video { width: 100%; height: 100%; object-fit: cover; background: var(--ink); }
+
+  /* Previous / Next: solid keys in the photo's bottom corners, readable on any photo.
+     Down there they cover grass and floor, not faces, and stay clear of the Play key. */
+  .nav {
+    position: absolute; bottom: 24px; width: 136px; height: 116px;
+    flex-direction: column; gap: 2px; font-size: var(--g-tiny); letter-spacing: 0.01em;
+  }
+  .nav .icon { font-size: 46px; stroke-width: 3.6; }
+  .prev { left: 20px; }
+  .next { right: 20px; }
+
+  /* Video: one huge play key, nothing playing until she taps it. */
+  .play {
+    position: absolute; left: 50%; top: 50%; width: 320px; height: 148px; margin: -78px 0 0 -160px;
+    border-radius: var(--r-pill); font-size: var(--g-hero); gap: 18px; padding-right: 14px;
+  }
+  .play .icon { font-size: 70px; }
+
+  /* Sent: a warm, brief "Sent to Sarah" on a solid plate. */
+  .sent-veil { position: absolute; inset: 0; background: rgba(15, 20, 25, 0.22); }
+  [data-state="sent"] .nav { display: none; } /* back in three seconds, with the photo */
+  .sent-plate {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    background: var(--bg); border: var(--g-line) solid var(--ink); border-radius: var(--r-lg);
+    align-items: center; gap: 26px; padding: 28px 44px 28px 30px; white-space: nowrap;
+  }
+  .sent-plate .heart {
+    width: 112px; height: 112px; flex: none; border-radius: 50%;
+    background: var(--love); border: var(--g-line) solid var(--ink); display: grid; place-items: center;
+  }
+  .sent-plate .heart img { width: 62px; height: 62px; filter: brightness(0) invert(1); }
+  .sent-plate .big { font-size: var(--g-hero); font-weight: 800; line-height: 1.05; }
+  .sent-plate .sub { font-size: var(--g-key2); font-weight: 600; color: var(--ink-2); margin-top: 8px; }
+
+  /* ---- Rail: four reaction tiles that never move, then Send a message -- */
+  .r-react { display: flex; flex-direction: column; }
+  .grid4 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .react {
+    height: 196px; flex-direction: column; gap: 10px; position: relative;
+    font-size: var(--g-reaction); letter-spacing: 0.005em;
+  }
+  .react .chip {
+    width: 100px; height: 100px; border-radius: 50%; background: #fff;
+    border: 3px solid var(--ink); display: grid; place-items: center;
+  }
+  .react .chip img { width: 64px; height: 64px; }
+  .react .w { line-height: 1; }
+  .love     { background: var(--love);     color: var(--love-ink); }
+  .funny    { background: var(--funny);    color: var(--funny-ink); }
+  .wow      { background: var(--wow);      color: var(--wow-ink); }
+  .thankful { background: var(--thankful); color: var(--thankful-ink); }
+  .react .tick { display: none; }
+  [data-state="sent"] .love .tick {
+    display: grid; place-items: center; position: absolute; top: 10px; right: 10px;
+    width: 52px; height: 52px; border-radius: 50%; background: #fff; color: var(--ink);
+    border: 3px solid var(--ink);
+  }
+  .react .tick .icon { font-size: 34px; stroke-width: 4.2; }
+
+  .send, .back { margin-top: auto; height: 120px; font-size: var(--g-label); gap: 18px; }
+  .send .icon, .back .icon { font-size: 50px; }
+  .back { font-size: var(--g-key2); gap: 14px; }
+
+  /* ---- Presets: eight big messages, one tap each ---------------------- */
+  .presets {
+    position: absolute; inset: 0 0 6px 0;
+    grid-template-columns: 1fr 1fr; grid-template-rows: repeat(4, 1fr); gap: 16px;
+  }
+  .preset {
+    justify-content: flex-start; gap: 18px; padding: 0 16px 0 20px; white-space: nowrap;
+    font-size: var(--g-preset); text-align: left;
+  }
+  .preset .bub {
+    width: 56px; height: 56px; flex: none; border-radius: 16px; background: var(--primary);
+    color: #fff; display: grid; place-items: center;
+  }
+  .preset .bub .icon { font-size: 36px; }
+
+  .r-presets { flex-direction: column; flex: 1; min-height: 0; padding-bottom: 22px; }
+  .r-presets .sub { font-size: var(--g-small); font-weight: 600; color: var(--ink-2); line-height: 1.2; padding: 0 6px 16px; margin-top: -6px; }
+  .to-photo {
+    flex: 1; min-height: 0; width: 100%; object-fit: cover; object-position: center 40%;
+    border: var(--g-line) solid var(--ink); border-radius: var(--r-md);
+  }
+
+  /* ---- Night (?night=1): tiles dimmed but still four distinct colours ---- */
+  [data-night] .love     { background: var(--n-love);     color: var(--n-ink); }
+  [data-night] .funny    { background: var(--n-funny);    color: var(--n-funny-ink); }
+  [data-night] .wow      { background: var(--n-wow);      color: var(--n-ink); }
+  [data-night] .thankful { background: var(--n-thankful); color: var(--n-ink); }
+  [data-night] .react .chip { background: #C9CED6; border-color: #000; }
+  [data-night] .react .chip img, [data-night] .sent-plate .heart img { opacity: .9; }
+  [data-night] .preset .bub { background: var(--n-primary); }
+  [data-night] .r-presets .sub, [data-night] .sent-plate .sub { color: var(--n-ink-2); }
+  [data-night] .to-photo { border-color: var(--n-line); filter: brightness(var(--n-photo)); }
+  [data-night] .sent-plate { background: var(--n-surface); border-color: var(--n-line); }
+  [data-night] .sent-plate .heart { background: var(--n-love); border-color: var(--n-line); }
+  [data-night] .react .tick { background: #C9CED6; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="i-home" viewBox="0 0 32 32"><path d="M4.5 15.5 16 5l11.5 10.5"/><path d="M8 13v14h16V13"/><path d="M13.5 27v-7h5v7"/></symbol>
+  <symbol id="i-left" viewBox="0 0 32 32"><path d="M14.5 6.5 5 16l9.5 9.5M5.5 16H27"/></symbol>
+  <symbol id="i-right" viewBox="0 0 32 32"><path d="M17.5 6.5 27 16l-9.5 9.5M26.5 16H5"/></symbol>
+  <symbol id="i-play" viewBox="0 0 32 32"><path d="M9.5 5.5v21l17.5-10.5z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-bubble" viewBox="0 0 32 32"><path d="M6.5 5.5h19a3 3 0 0 1 3 3v11a3 3 0 0 1-3 3H15l-6.5 5v-5h-2a3 3 0 0 1-3-3v-11a3 3 0 0 1 3-3z"/></symbol>
+  <symbol id="i-bubble-fill" viewBox="0 0 32 32"><path d="M6.5 5.5h19a3 3 0 0 1 3 3v11a3 3 0 0 1-3 3H15l-6.5 5v-5h-2a3 3 0 0 1-3-3v-11a3 3 0 0 1 3-3z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-check" viewBox="0 0 32 32"><path d="M7 16.5l6 6L25.5 10"/></symbol>
+</svg>
+
+<header class="top">
+  <a class="key home" href="home.html" data-home>
+    <svg class="icon" aria-hidden="true"><use href="#i-home"/></svg>Home
+  </a>
+  <div class="line">
+    <div class="msg m-photo"><div><div class="big">From Sarah</div><div class="sub">This morning</div></div></div>
+    <div class="msg m-video"><div><div class="big">Video from Sarah</div><div class="sub">This morning · 1 minute long</div></div></div>
+    <div class="msg m-presets"><div><div class="big">A message for Sarah</div><div class="sub">Tap one and it’s sent</div></div></div>
+  </div>
+  <div class="clock">
+    <div class="time"><span class="t-day">10:42 am</span><span class="t-night">9:42 pm</span></div>
+    <div class="date">Tuesday, October 21</div>
+  </div>
+</header>
+
+<main class="stage">
+  <figure class="card" style="margin:0">
+    <div class="pic">
+      <img class="cover photo" src="../assets/photos/p646.jpg" alt="Lily walking through a sunny field">
+      <!-- The video item: poster only, nothing plays until the big key is tapped. -->
+      <video class="video" poster="../assets/photos/p646.jpg" preload="none" playsinline aria-label="Video from Sarah"></video>
+      <button class="key blue play" type="button">
+        <svg class="icon" aria-hidden="true"><use href="#i-play"/></svg>Play
+      </button>
+
+      <button class="key nav prev" type="button">
+        <svg class="icon" aria-hidden="true"><use href="#i-left"/></svg>Previous
+      </button>
+      <button class="key nav next" type="button">
+        <svg class="icon" aria-hidden="true"><use href="#i-right"/></svg>Next
+      </button>
+
+      <div class="sent-veil" aria-hidden="true"></div>
+      <div class="sent-plate" role="status">
+        <span class="heart"><img src="../assets/emoji/emoji_u2764.svg" alt=""></span>
+        <div><div class="big">Sent to Sarah</div><div class="sub">She’ll know you loved it.</div></div>
+      </div>
+    </div>
+    <figcaption class="words">
+      <div class="say">“Lily at the farm today. She wanted you to see her new boots!”</div>
+    </figcaption>
+  </figure>
+
+  <div class="presets" role="group" aria-label="Messages for Sarah">
+    <button class="key preset" type="button"><span class="bub" aria-hidden="true"><svg class="icon"><use href="#i-bubble-fill"/></svg></span>Love you</button>
+    <button class="key preset" type="button"><span class="bub" aria-hidden="true"><svg class="icon"><use href="#i-bubble-fill"/></svg></span>Call me</button>
+    <button class="key preset" type="button"><span class="bub" aria-hidden="true"><svg class="icon"><use href="#i-bubble-fill"/></svg></span>Thank you</button>
+    <button class="key preset" type="button"><span class="bub" aria-hidden="true"><svg class="icon"><use href="#i-bubble-fill"/></svg></span>Miss you all</button>
+    <button class="key preset" type="button"><span class="bub" aria-hidden="true"><svg class="icon"><use href="#i-bubble-fill"/></svg></span>So beautiful</button>
+    <button class="key preset" type="button"><span class="bub" aria-hidden="true"><svg class="icon"><use href="#i-bubble-fill"/></svg></span>Made my day</button>
+    <button class="key preset" type="button"><span class="bub" aria-hidden="true"><svg class="icon"><use href="#i-bubble-fill"/></svg></span>Come visit soon</button>
+    <button class="key preset" type="button"><span class="bub" aria-hidden="true"><svg class="icon"><use href="#i-bubble-fill"/></svg></span>Proud of you</button>
+  </div>
+</main>
+
+<aside class="rail">
+  <div class="r-react">
+    <div class="rail-head">Tell Sarah</div>
+    <div class="grid4">
+      <button class="key react love" type="button" data-reaction="love" aria-pressed="false">
+        <span class="chip"><img src="../assets/emoji/emoji_u2764.svg" alt=""></span><span class="w">Love</span>
+        <span class="tick" aria-hidden="true"><svg class="icon"><use href="#i-check"/></svg></span>
+      </button>
+      <button class="key react funny" type="button" data-reaction="funny">
+        <span class="chip"><img src="../assets/emoji/emoji_u1f602.svg" alt=""></span><span class="w">Funny</span>
+      </button>
+      <button class="key react wow" type="button" data-reaction="wow">
+        <span class="chip"><img src="../assets/emoji/emoji_u1f62e.svg" alt=""></span><span class="w">Wow</span>
+      </button>
+      <button class="key react thankful" type="button" data-reaction="thankful">
+        <span class="chip"><img src="../assets/emoji/emoji_u1f64f.svg" alt=""></span><span class="w">Thankful</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="r-presets">
+    <div class="rail-head">Goes to Sarah only</div>
+    <div class="sub">Not the whole family.</div>
+    <img class="to-photo" src="../assets/photos/p646.jpg" alt="The photo you are answering">
+  </div>
+
+  <a class="key blue send" href="photo.html?state=presets">
+    <svg class="icon" aria-hidden="true"><use href="#i-bubble"/></svg>Send a message
+  </a>
+  <a class="key back" href="photo.html">
+    <svg class="icon" aria-hidden="true"><use href="#i-left"/></svg>Back to the photo
+  </a>
+</aside>
+
+<script>
+  // In the sent state the Love key reads as held down.
+  if (document.documentElement.dataset.state === 'sent')
+    document.querySelector('.love').setAttribute('aria-pressed', 'true');
+</script>
+</body>
+</html>
