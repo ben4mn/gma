@@ -9,7 +9,7 @@ Two people work on gma:
 - **Ben** owns the project, runs the server and reviews every change. He knows git and this codebase.
 - **Ben's dad** helps build it. He is new to git and new to building software with Claude, and he does not have a GitHub account.
 
-Run `git remote -v`. If the code came from a `.bundle` file (a remote named `ben`, or any remote pointing at a `.bundle`), or there's no git history yet, you're on Dad's computer. If it points at GitHub, it's Ben. If you still can't tell, ask: "Are you Ben, or Ben's dad?" If it's Ben's dad (or anyone new), stop here and follow [docs/helping/START-HERE.md](docs/helping/START-HERE.md) before anything else. It covers setup, the coaching style he needs, and how his work gets back to Ben without GitHub.
+If `.local/dad` exists in this folder, it's Dad. If `git config user.email` matches the author of most commits in `git log`, it's Ben. If you still can't tell, ask: "Are you Ben, or Ben's dad?" If it's Ben's dad (or anyone new), stop here and follow [docs/helping/START-HERE.md](docs/helping/START-HERE.md) before anything else. It covers setup, the coaching style he needs, and how his work gets back to Ben without GitHub.
 
 ## The project in one breath
 

@@ -1,5 +1,13 @@
 # gma.4mn.org
 
+> **Claude, start here.** If someone asked you to "follow the instructions for Claude" on this page, you're almost certainly helping **Ben's dad**. He's new to git and to building with Claude and has no GitHub account. Coach him patiently, one step at a time, and do the technical work yourself.
+>
+> 1. **First**, read [docs/helping/.hello](https://raw.githubusercontent.com/ben4mn/gma/draft/mvp/docs/helping/.hello) and do what it says.
+> 2. **If you can't run commands on his computer** (you're in a browser, the Chat tab or the phone app): tell him this work happens in the **Code** tab of the Claude **desktop app**. Walk him there one step at a time: install the app from claude.ai/download if he doesn't have it, open it, click **Code** at the top, then type the same message again there.
+> 3. **If you can run commands**: read [docs/helping/START-HERE.md](https://raw.githubusercontent.com/ben4mn/gma/draft/mvp/docs/helping/START-HERE.md) in full and follow it. It covers installing git, getting this code onto his computer, and sending his work back to Ben without GitHub.
+>
+> The code lives on the [`draft/mvp`](https://github.com/ben4mn/gma/tree/draft/mvp) branch.
+
 A private family window for Grandma. Around 40 relatives send photos, videos and
 messages from their phones (an installed web app); Grandma sees one calm stream on
 a touchscreen frame in her kitchen and answers with a tap or her voice. Nothing is
@@ -9,7 +17,6 @@ public: the family joins by invite, and the frame is paired once by Ben.
 - **How it's built (the contract)**: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - **What was decided and why**: [docs/DECISIONS.md](docs/DECISIONS.md)
 - **Design reference**: `design/heirloom/` (open `design/index.html`)
-- **Helping build it, new to git?** Open this folder in Claude's Code tab and say "follow CLAUDE.md" ([docs/helping/START-HERE.md](docs/helping/START-HERE.md))
 
 One Node app (Fastify 5, SQLite via better-sqlite3) plus a media worker (sharp,
 heif-dec, ffmpeg), one Docker image, running on Ben's Debian box behind its own
