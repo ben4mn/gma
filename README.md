@@ -9,6 +9,7 @@ public: the family joins by invite, and the frame is paired once by Ben.
 - **How it's built (the contract)**: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - **What was decided and why**: [docs/DECISIONS.md](docs/DECISIONS.md)
 - **Design reference**: `design/heirloom/` (open `design/index.html`)
+- **Helping build it, new to git?** Open this folder in Claude's Code tab and say "follow CLAUDE.md" ([docs/helping/START-HERE.md](docs/helping/START-HERE.md))
 
 One Node app (Fastify 5, SQLite via better-sqlite3) plus a media worker (sharp,
 heif-dec, ffmpeg), one Docker image, running on Ben's Debian box behind its own
